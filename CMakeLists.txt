@@ -1,7 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
 project(aeqts_qubo_cuda LANGUAGES CXX)
 
-# Define backend option: CUDA or HIP
 set(BACKEND "CUDA" CACHE STRING "Choose the backend (CUDA or HIP)")
 set_property(CACHE BACKEND PROPERTY STRINGS "CUDA" "HIP")
 
@@ -9,10 +8,11 @@ if(BACKEND STREQUAL "CUDA")
     enable_language(CUDA)
     set(SRC_FILES src/aeqts_qubo.cu)
 
-    # CUDA specific settings
     set(CMAKE_CUDA_ARCHITECTURES "native")
 
     add_executable(aeqts_qubo ${SRC_FILES})
+
+    target_link_libraries(aeqts_qubo PRIVATE curand)
 
     set_target_properties(aeqts_qubo PROPERTIES
         CUDA_SEPARABLE_COMPILATION ON
@@ -21,15 +21,27 @@ if(BACKEND STREQUAL "CUDA")
 
 elseif(BACKEND STREQUAL "HIP")
     enable_language(HIP)
-    set(SRC_FILES src/aeqts_qubo.hip)
 
+    list(APPEND CMAKE_PREFIX_PATH /opt/rocm)
+
+    find_package(hiprand REQUIRED)
+    find_package(rocthrust REQUIRED)
+
+    set(SRC_FILES src/aeqts_qubo.hip)
     add_executable(aeqts_qubo ${SRC_FILES})
 
-    # Set C++ standard for HIP
-    set_target_properties(aeqts_qubo PROPERTIES
-        CXX_STANDARD 17
-        CXX_STANDARD_REQUIRED ON
+    target_link_libraries(aeqts_qubo PRIVATE
+        hip::hiprand
+        roc::rocthrust
     )
+
+    set_target_properties(aeqts_qubo PROPERTIES
+        HIP_STANDARD 17
+        HIP_STANDARD_REQUIRED ON
+    )
+
+    set(CMAKE_HIP_ARCHITECTURES "native")
+
 else()
     message(FATAL_ERROR "BACKEND must be either CUDA or HIP")
 endif()
