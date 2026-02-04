@@ -1,4 +1,4 @@
-// aeqts_qubo_cuda.cu
+// aeqts_qubo.cu
 // AEQTS + QUBO (Teacher formulation, no slack, fixed P) : CUDA parallel version
 // - Parallel: neighbour generation (measure), QUBO energy eval, updateQ per item
 // - Sort: thrust::sort_by_key energies (ascending, smaller is better)

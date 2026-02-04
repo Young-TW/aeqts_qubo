@@ -1,6 +1,6 @@
 #include "hip/hip_runtime.h"
-// aeqts_qubo_cuda.cu
-// AEQTS + QUBO (Teacher formulation, no slack, fixed P) : CUDA parallel version
+// aeqts_qubo.hip
+// AEQTS + QUBO (Teacher formulation, no slack, fixed P) : HIP parallel version
 // - Parallel: neighbour generation (measure), QUBO energy eval, updateQ per item
 // - Sort: thrust::sort_by_key energies (ascending, smaller is better)
 
@@ -23,10 +23,10 @@ constexpr float PI_F = 3.14159265358979323846f;
 #include <iostream>
 #include <chrono>
 
-#define CUDA_CHECK(call) do {                                  \
+#define HIP_CHECK(call) do {                                  \
   hipError_t _e = (call);                                     \
   if (_e != hipSuccess) {                                     \
-    std::fprintf(stderr, "CUDA error %s:%d: %s\n",             \
+    std::fprintf(stderr, "HIP error %s:%d: %s\n",             \
       __FILE__, __LINE__, hipGetErrorString(_e));             \
     std::exit(1);                                              \
   }                                                            \
@@ -61,7 +61,7 @@ static std::vector<float> build_teacher_qubo_matrix_host(
 }
 
 // ------------------------------ Device: RNG init ------------------------------
-__global__ void init_curand_states(hiprandStatePhilox4_32_10_t* states, unsigned long long seed, int total_threads)
+__global__ void init_hiprand_states(hiprandStatePhilox4_32_10_t* states, unsigned long long seed, int total_threads)
 {
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
     if (tid >= total_threads) return;
@@ -189,8 +189,8 @@ int main(int argc, char** argv)
 
     // ---- seed parsing ----
     // Usage:
-    //   aeqts_qubo_cuda.exe --seed 12345
-    //   aeqts_qubo_cuda.exe 12345
+    //   aeqts_qubo.exe --seed 12345
+    //   aeqts_qubo.exe 12345
     unsigned long long seed = 12345ULL;
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
@@ -230,25 +230,25 @@ int main(int argc, char** argv)
     hiprandStatePhilox4_32_10_t* d_states = nullptr;
     int total_measure_threads = N * n_items;
 
-    CUDA_CHECK(hipMalloc(&dQ, (size_t)n_items * (size_t)n_items * sizeof(float)));
-    CUDA_CHECK(hipMemcpy(dQ, Qh.data(), (size_t)n_items * (size_t)n_items * sizeof(float), hipMemcpyHostToDevice));
+    HIP_CHECK(hipMalloc(&dQ, (size_t)n_items * (size_t)n_items * sizeof(float)));
+    HIP_CHECK(hipMemcpy(dQ, Qh.data(), (size_t)n_items * (size_t)n_items * sizeof(float), hipMemcpyHostToDevice));
 
-    CUDA_CHECK(hipMalloc(&d_energy, (size_t)N * sizeof(float)));
-    CUDA_CHECK(hipMalloc(&d_idx, (size_t)N * sizeof(int)));
-    CUDA_CHECK(hipMalloc(&d_nei, (size_t)N * (size_t)n_items * sizeof(unsigned char)));
+    HIP_CHECK(hipMalloc(&d_energy, (size_t)N * sizeof(float)));
+    HIP_CHECK(hipMalloc(&d_idx, (size_t)N * sizeof(int)));
+    HIP_CHECK(hipMalloc(&d_nei, (size_t)N * (size_t)n_items * sizeof(unsigned char)));
 
-    CUDA_CHECK(hipMalloc(&d_alpha, (size_t)n_items * sizeof(float)));
-    CUDA_CHECK(hipMalloc(&d_beta,  (size_t)n_items * sizeof(float)));
+    HIP_CHECK(hipMalloc(&d_alpha, (size_t)n_items * sizeof(float)));
+    HIP_CHECK(hipMalloc(&d_beta,  (size_t)n_items * sizeof(float)));
 
-    CUDA_CHECK(hipMalloc(&d_states, (size_t)total_measure_threads * sizeof(hiprandStatePhilox4_32_10_t)));
+    HIP_CHECK(hipMalloc(&d_states, (size_t)total_measure_threads * sizeof(hiprandStatePhilox4_32_10_t)));
 
     // init RNG (match fixed seed behaviour)
     {
         int threads = 256;
         int blocks  = (total_measure_threads + threads - 1) / threads;
-        init_curand_states<<<blocks, threads>>>(d_states, seed, total_measure_threads);
-        CUDA_CHECK(hipGetLastError());
-        CUDA_CHECK(hipDeviceSynchronize());
+        init_hiprand_states<<<blocks, threads>>>(d_states, seed, total_measure_threads);
+        HIP_CHECK(hipGetLastError());
+        HIP_CHECK(hipDeviceSynchronize());
     }
 
     // host buffers for reporting
@@ -266,8 +266,8 @@ int main(int argc, char** argv)
         // init qindividuals to 1/sqrt(2)
         float init = 1.0f / std::sqrt(2.0f);
         std::vector<float> alpha_h(n_items, init), beta_h(n_items, init);
-        CUDA_CHECK(hipMemcpy(d_alpha, alpha_h.data(), (size_t)n_items * sizeof(float), hipMemcpyHostToDevice));
-        CUDA_CHECK(hipMemcpy(d_beta,  beta_h.data(),  (size_t)n_items * sizeof(float), hipMemcpyHostToDevice));
+        HIP_CHECK(hipMemcpy(d_alpha, alpha_h.data(), (size_t)n_items * sizeof(float), hipMemcpyHostToDevice));
+        HIP_CHECK(hipMemcpy(d_beta,  beta_h.data(),  (size_t)n_items * sizeof(float), hipMemcpyHostToDevice));
 
         float global_best_energy = 1e30f;
 
@@ -277,13 +277,13 @@ int main(int argc, char** argv)
             int threads = 256;
             int blocks  = (total_measure_threads + threads - 1) / threads;
             generate_neighbours_kernel<<<blocks, threads>>>(d_alpha, d_beta, d_nei, N, n_items, d_states);
-            CUDA_CHECK(hipGetLastError());
+            HIP_CHECK(hipGetLastError());
 
             // 2) energies
             int t2 = 128;
             int b2 = (N + t2 - 1) / t2;
             qubo_energy_kernel<<<b2, t2>>>(d_nei, dQ, d_energy, N, n_items);
-            CUDA_CHECK(hipGetLastError());
+            HIP_CHECK(hipGetLastError());
 
             // 3) reset indices (match Python argsort)
             {
@@ -299,11 +299,11 @@ int main(int argc, char** argv)
             }
 
             // 5) set global best from the best in sorted list
-            CUDA_CHECK(hipMemcpy(&global_best_energy, d_energy, sizeof(float), hipMemcpyDeviceToHost));
+            HIP_CHECK(hipMemcpy(&global_best_energy, d_energy, sizeof(float), hipMemcpyDeviceToHost));
 
             int best_idx = 0;
-            CUDA_CHECK(hipMemcpy(&best_idx, d_idx, sizeof(int), hipMemcpyDeviceToHost));
-            CUDA_CHECK(hipMemcpy(best_sol_h.data(),
+            HIP_CHECK(hipMemcpy(&best_idx, d_idx, sizeof(int), hipMemcpyDeviceToHost));
+            HIP_CHECK(hipMemcpy(best_sol_h.data(),
                                   d_nei + (size_t)best_idx * (size_t)n_items,
                                   (size_t)n_items * sizeof(unsigned char),
                                   hipMemcpyDeviceToHost));
@@ -322,7 +322,7 @@ int main(int argc, char** argv)
                 int threads = 256;
                 int blocks  = (total_measure_threads + threads - 1) / threads;
                 generate_neighbours_kernel<<<blocks, threads>>>(d_alpha, d_beta, d_nei, N, n_items, d_states);
-                CUDA_CHECK(hipGetLastError());
+                HIP_CHECK(hipGetLastError());
             }
 
             // 2) energies
@@ -330,7 +330,7 @@ int main(int argc, char** argv)
                 int threads = 128;
                 int blocks  = (N + threads - 1) / threads;
                 qubo_energy_kernel<<<blocks, threads>>>(d_nei, dQ, d_energy, N, n_items);
-                CUDA_CHECK(hipGetLastError());
+                HIP_CHECK(hipGetLastError());
             }
 
             // 3) reset indices every iteration (match Python argsort)
@@ -348,14 +348,14 @@ int main(int argc, char** argv)
 
             // 5) update global best (compare current best)
             float current_best_energy = 0.0f;
-            CUDA_CHECK(hipMemcpy(&current_best_energy, d_energy, sizeof(float), hipMemcpyDeviceToHost));
+            HIP_CHECK(hipMemcpy(&current_best_energy, d_energy, sizeof(float), hipMemcpyDeviceToHost));
 
             if (current_best_energy < global_best_energy) {
                 global_best_energy = current_best_energy;
 
                 int best_idx = 0;
-                CUDA_CHECK(hipMemcpy(&best_idx, d_idx, sizeof(int), hipMemcpyDeviceToHost));
-                CUDA_CHECK(hipMemcpy(best_sol_h.data(),
+                HIP_CHECK(hipMemcpy(&best_idx, d_idx, sizeof(int), hipMemcpyDeviceToHost));
+                HIP_CHECK(hipMemcpy(best_sol_h.data(),
                                       d_nei + (size_t)best_idx * (size_t)n_items,
                                       (size_t)n_items * sizeof(unsigned char),
                                       hipMemcpyDeviceToHost));
@@ -366,11 +366,11 @@ int main(int argc, char** argv)
                 int threads = 128;
                 int blocks  = (n_items + threads - 1) / threads;
                 updateQ_kernel<<<blocks, threads>>>(d_nei, d_idx, d_alpha, d_beta, N, n_items);
-                CUDA_CHECK(hipGetLastError());
+                HIP_CHECK(hipGetLastError());
             }
 
             // Make timing meaningful for GPU work
-            CUDA_CHECK(hipDeviceSynchronize());
+            HIP_CHECK(hipDeviceSynchronize());
 
             auto t1 = std::chrono::high_resolution_clock::now();
             double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
@@ -401,13 +401,13 @@ int main(int argc, char** argv)
     }
 
     // cleanup
-    CUDA_CHECK(hipFree(d_states));
-    CUDA_CHECK(hipFree(d_beta));
-    CUDA_CHECK(hipFree(d_alpha));
-    CUDA_CHECK(hipFree(d_nei));
-    CUDA_CHECK(hipFree(d_idx));
-    CUDA_CHECK(hipFree(d_energy));
-    CUDA_CHECK(hipFree(dQ));
+    HIP_CHECK(hipFree(d_states));
+    HIP_CHECK(hipFree(d_beta));
+    HIP_CHECK(hipFree(d_alpha));
+    HIP_CHECK(hipFree(d_nei));
+    HIP_CHECK(hipFree(d_idx));
+    HIP_CHECK(hipFree(d_energy));
+    HIP_CHECK(hipFree(dQ));
 
     return 0;
 }
