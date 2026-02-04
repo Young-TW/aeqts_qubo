@@ -185,7 +185,9 @@ int main(int argc, char** argv)
     const int experiment = 10;
     const int iter = 1000;
     const int n_items = 500;
-    const int N = 50;
+    // N is needed to match GPU architecture Wavefront size
+    // if CDNA: 64, if RDNA: 32
+    const int N = 32;
 
     // ---- seed parsing ----
     // Usage:
