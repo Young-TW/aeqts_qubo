@@ -44,29 +44,20 @@ jobs:
     container:
       image: rocm/dev-ubuntu-22.04:7.2 # Adjust ROCm version as needed
       options: --user root
-
     steps:
     - uses: actions/checkout@v4
 
-    # Install dependencies missing in the base dev image
-    # We need to update apt caches and install git/cmake if strictly necessary,
-    # but mainly the ROCm math libraries.
     - name: Install Dependencies
       run: |
         apt-get update
-        apt-get install -y rocthrust-dev hiprand-dev cmake git
+        apt-get install -y rocthrust-dev hiprand-dev rocrand-dev cmake git
 
-    # Configure CMake
-    # explicitly setting ARCHITECTURES to gfx90a (MI200 series) to avoid hardware detection
     - name: Configure CMake (HIP)
-      # We need to tell CMake where ROCm is, though the container usually handles environment variables.
-      # CMAKE_PREFIX_PATH is appended in your CMakeLists, which is good.
       run: >
         cmake -B build
         -DBACKEND=HIP
         -DCMAKE_BUILD_TYPE=Release
         -DCMAKE_HIP_ARCHITECTURES=gfx90a
 
-    # Build the project
     - name: Build (HIP)
       run: cmake --build build --verbose
