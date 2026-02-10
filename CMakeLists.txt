@@ -8,7 +8,9 @@ if(BACKEND STREQUAL "CUDA")
     enable_language(CUDA)
     set(SRC_FILES src/aeqts_qubo.cu)
 
-    set(CMAKE_CUDA_ARCHITECTURES "native")
+    if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
+        set(CMAKE_CUDA_ARCHITECTURES "native")
+    endif()
 
     add_executable(aeqts_qubo ${SRC_FILES})
 
@@ -28,6 +30,11 @@ elseif(BACKEND STREQUAL "HIP")
     find_package(rocthrust REQUIRED)
 
     set(SRC_FILES src/aeqts_qubo.hip)
+
+    if(NOT DEFINED CMAKE_HIP_ARCHITECTURES)
+        set(CMAKE_HIP_ARCHITECTURES "native")
+    endif()
+
     add_executable(aeqts_qubo ${SRC_FILES})
 
     target_link_libraries(aeqts_qubo PRIVATE
@@ -39,8 +46,6 @@ elseif(BACKEND STREQUAL "HIP")
         HIP_STANDARD 17
         HIP_STANDARD_REQUIRED ON
     )
-
-    set(CMAKE_HIP_ARCHITECTURES "native")
 
 else()
     message(FATAL_ERROR "BACKEND must be either CUDA or HIP")
