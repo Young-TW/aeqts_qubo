@@ -1,0 +1,69 @@
+name: Build CUDA and HIP
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+
+jobs:
+  # Job 1: Build for CUDA
+  build-cuda:
+    runs-on: ubuntu-22.04
+    steps:
+    - uses: actions/checkout@v4
+
+    # Install CUDA Toolkit
+    - name: Set up CUDA Toolkit
+      uses: Jimver/cuda-toolkit@v0.2.14
+      with:
+        cuda: '12.3.0' # Specify the version you need
+        method: 'network'
+        sub-packages: '["nvcc", "cudart-dev", "curand-dev"]'
+
+    # Configure CMake
+    # explicitly setting ARCHITECTURES to 75 (Turing) to avoid hardware detection on CPU runner
+    - name: Configure CMake (CUDA)
+      run: >
+        cmake -B build
+        -DBACKEND=CUDA
+        -DCMAKE_BUILD_TYPE=Release
+        -DCMAKE_CUDA_ARCHITECTURES=75
+
+    # Build the project
+    - name: Build (CUDA)
+      run: cmake --build build --verbose
+
+  # Job 2: Build for HIP (ROCm)
+  build-hip:
+    runs-on: ubuntu-22.04
+    # Run inside a Docker container that has the ROCm environment pre-installed
+    container:
+      image: rocm/dev-ubuntu-22.04:7.2 # Adjust ROCm version as needed
+      options: --user root
+
+    steps:
+    - uses: actions/checkout@v4
+
+    # Install dependencies missing in the base dev image
+    # We need to update apt caches and install git/cmake if strictly necessary,
+    # but mainly the ROCm math libraries.
+    - name: Install Dependencies
+      run: |
+        apt-get update
+        apt-get install -y rocthrust-dev hiprand-dev cmake git
+
+    # Configure CMake
+    # explicitly setting ARCHITECTURES to gfx90a (MI200 series) to avoid hardware detection
+    - name: Configure CMake (HIP)
+      # We need to tell CMake where ROCm is, though the container usually handles environment variables.
+      # CMAKE_PREFIX_PATH is appended in your CMakeLists, which is good.
+      run: >
+        cmake -B build
+        -DBACKEND=HIP
+        -DCMAKE_BUILD_TYPE=Release
+        -DCMAKE_HIP_ARCHITECTURES=gfx90a
+
+    # Build the project
+    - name: Build (HIP)
+      run: cmake --build build --verbose
