@@ -7,22 +7,25 @@ on:
     branches: [ "main", "master" ]
 
 jobs:
-  # Job 1: Build for CUDA
+    # Job 1: Build for CUDA
   build-cuda:
     runs-on: ubuntu-22.04
     steps:
     - uses: actions/checkout@v4
 
     # Install CUDA Toolkit
+    # removed "curand-dev", because the action produces an incorrect package name
     - name: Set up CUDA Toolkit
       uses: Jimver/cuda-toolkit@v0.2.14
       with:
-        cuda: '12.3.0' # Specify the version you need
+        cuda: '12.3.0'
         method: 'network'
-        sub-packages: '["nvcc", "cudart-dev", "curand-dev"]'
+        sub-packages: '["nvcc", "cudart-dev"]'
+
+    - name: Install cuRAND library
+      run: sudo apt-get install -y libcurand-dev-12-3
 
     # Configure CMake
-    # explicitly setting ARCHITECTURES to 75 (Turing) to avoid hardware detection on CPU runner
     - name: Configure CMake (CUDA)
       run: >
         cmake -B build
