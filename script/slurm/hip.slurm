@@ -15,10 +15,10 @@ module purge
 module load rocm
 
 # Configure for HIP backend in isolated build directory
-cmake -S . -B build_hip -DBACKEND=HIP
+cmake -S . -B build -DBACKEND=HIP
 
 # Build the executable
-cmake --build build_hip -j
+cmake --build build -j
 
 # Run the executable
 srun ./build/aeqts_qubo

@@ -15,10 +15,10 @@ module purge
 module load cuda
 
 # Configure for CUDA backend in isolated build directory
-cmake -S . -B build_cuda -DBACKEND=CUDA
+cmake -S . -B build -DBACKEND=CUDA
 
 # Build the executable
-cmake --build build_cuda -j
+cmake --build build -j
 
 # Run the executable
 srun ./build/aeqts_qubo
