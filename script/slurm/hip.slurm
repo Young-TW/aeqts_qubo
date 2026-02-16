@@ -15,6 +15,9 @@ module purge
 module load rocm
 module load cmake
 
+# Print AMD GPU model
+rocm-smi --showproductname
+
 # Configure for HIP backend in isolated build directory
 cmake -S . -B build -DBACKEND=HIP
 

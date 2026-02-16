@@ -15,6 +15,9 @@ module purge
 module load cuda
 module load cmake
 
+# Print NVIDIA GPU model
+nvidia-smi -L
+
 # Configure for CUDA backend in isolated build directory
 cmake -S . -B build -DBACKEND=CUDA
 
