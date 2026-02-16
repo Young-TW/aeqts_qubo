@@ -5,12 +5,15 @@ set(BACKEND "CUDA" CACHE STRING "Choose the backend (CUDA or HIP)")
 set_property(CACHE BACKEND PROPERTY STRINGS "CUDA" "HIP")
 
 if(BACKEND STREQUAL "CUDA")
+    if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
+        # if the user hasn't specified architectures, use "native" to target the current GPU
+        # set(CMAKE_CUDA_ARCHITECTURES "native")
+        # this repo is for h100/h200, so we can set the architecture to "90" for better performance
+        set(CMAKE_CUDA_ARCHITECTURES "90")
+    endif()
+
     enable_language(CUDA)
     set(SRC_FILES src/aeqts_qubo.cu)
-
-    if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
-        set(CMAKE_CUDA_ARCHITECTURES "native")
-    endif()
 
     add_executable(aeqts_qubo ${SRC_FILES})
 
