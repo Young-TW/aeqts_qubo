@@ -21,4 +21,4 @@ cmake -S . -B build_hip -DBACKEND=HIP
 cmake --build build_hip -j
 
 # Run the executable
-srun ./build_hip/aeqts_qubo
+srun ./build/aeqts_qubo

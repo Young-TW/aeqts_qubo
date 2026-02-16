@@ -21,4 +21,4 @@ cmake -S . -B build_cuda -DBACKEND=CUDA
 cmake --build build_cuda -j
 
 # Run the executable
-srun ./build_cuda/aeqts_qubo
+srun ./build/aeqts_qubo
