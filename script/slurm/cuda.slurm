@@ -5,7 +5,7 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --time=00:20:00
-#SBATCH --partition=normal
+#SBATCH --partition=normal2
 #SBATCH --account=MST114318
 #SBATCH --gpus-per-node=1
 
@@ -19,7 +19,7 @@ module load cmake
 nvidia-smi -L
 
 # Configure for CUDA backend in isolated build directory
-cmake -S . -B build -DBACKEND=CUDA
+cmake -S . -B build -DBACKEND=CUDA -DCMAKE_BUILD_TYPE=Release
 
 # Build the executable
 cmake --build build -j

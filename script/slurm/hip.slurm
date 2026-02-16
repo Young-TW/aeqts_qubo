@@ -19,7 +19,7 @@ module load cmake
 rocm-smi --showproductname
 
 # Configure for HIP backend in isolated build directory
-cmake -S . -B build -DBACKEND=HIP
+cmake -S . -B build -DBACKEND=HIP -DCMAKE_BUILD_TYPE=Release
 
 # Build the executable
 cmake --build build -j

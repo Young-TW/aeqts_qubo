@@ -13,7 +13,7 @@ if(BACKEND STREQUAL "CUDA")
     endif()
 
     enable_language(CUDA)
-    set(SRC_FILES src/main.cu)
+    set(SRC_FILES src/main.cu src/kernels.cu)
 
     add_executable(aeqts_qubo ${SRC_FILES})
 
