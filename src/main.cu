@@ -5,9 +5,9 @@
 #include <numeric>
 #include <iostream>
 #include <chrono>
+#include <string>
 
 // ------------------------------ Host: build QUBO matrix ------------------------------
-// Same as Python build_teacher_qubo_matrix(values, weights, capacity, P)
 static std::vector<float> build_teacher_qubo_matrix_host(
     const std::vector<float>& values,
     const std::vector<float>& weights,
@@ -34,25 +34,34 @@ static std::vector<float> build_teacher_qubo_matrix_host(
 // ------------------------------ Main ------------------------------
 int main(int argc, char** argv)
 {
-    // ====== Match your classmate defaults ======
-    const int iter = 1000;
-    const int n_items = 500;
-    const int N = 50;
+    // ====== 預設參數 (Match your classmate defaults) ======
+    int iter = 1000;
+    int n_items = 500;
+    int N = 50;
+    unsigned long long base_seed = 12345ULL;
+    int run_id = 0; // 用於區別不同的 Slurm Task，預設 0 代表單次測試
 
-    // ---- seed parsing ----
-    // Usage:
-    //   aeqts_qubo_cuda.exe --seed 12345
-    //   aeqts_qubo_cuda.exe 12345
-    unsigned long long seed = 12345ULL;
+    // ---- CLI 參數解析 ----
     for (int i = 1; i < argc; ++i) {
-        std::string a = argv[i];
-        if (a == "--seed" && i + 1 < argc) {
-            seed = std::stoull(argv[++i]);
-        } else if (i == 1 && !a.empty() && a[0] != '-') {
-            // allow first positional argument as seed
-            seed = std::stoull(a);
+        std::string arg = argv[i];
+        if (arg == "--seed" && i + 1 < argc) {
+            base_seed = std::stoull(argv[++i]);
+        } else if (arg == "--items" && i + 1 < argc) {
+            n_items = std::stoi(argv[++i]);
+        } else if (arg == "--N" && i + 1 < argc) {
+            N = std::stoi(argv[++i]);
+        } else if (arg == "--iter" && i + 1 < argc) {
+            iter = std::stoi(argv[++i]);
+        } else if (arg == "--run_id" && i + 1 < argc) {
+            run_id = std::stoi(argv[++i]);
+        } else if (i == 1 && !arg.empty() && arg[0] != '-') {
+            // 保留相容性：允許第一個位置參數直接作為 seed
+            base_seed = std::stoull(arg);
         }
     }
+
+    // 計算實際種子 (避免 Slurm Array 多個平行任務跑出一樣的結果)
+    unsigned long long actual_seed = base_seed + run_id;
 
     // weights: items = mod(range,10)+1 ; values=items+5 ; C = sum(weights)/2
     std::vector<float> weights(n_items), values(n_items);
@@ -73,12 +82,9 @@ int main(int argc, char** argv)
     float *dQ = nullptr;
     float *d_energy = nullptr;
     int   *d_idx = nullptr;
-
-    unsigned char* d_nei = nullptr; // N*n_items
-
+    unsigned char* d_nei = nullptr;
     float *d_alpha = nullptr, *d_beta = nullptr;
 
-    // For neighbour RNG: one state per (nbr,item) thread to match kernel indexing
     curandStatePhilox4_32_10_t* d_states = nullptr;
     int total_measure_threads = N * n_items;
 
@@ -94,11 +100,11 @@ int main(int argc, char** argv)
 
     CUDA_CHECK(cudaMalloc(&d_states, (size_t)total_measure_threads * sizeof(curandStatePhilox4_32_10_t)));
 
-    // init RNG (match fixed seed behaviour)
+    // init RNG
     {
         int threads = 256;
         int blocks  = (total_measure_threads + threads - 1) / threads;
-        init_curand_states<<<blocks, threads>>>(d_states, seed, total_measure_threads);
+        init_curand_states<<<blocks, threads>>>(d_states, actual_seed, total_measure_threads);
         CUDA_CHECK(cudaGetLastError());
         CUDA_CHECK(cudaDeviceSynchronize());
     }
@@ -109,130 +115,85 @@ int main(int argc, char** argv)
     CUDA_CHECK(cudaMalloc(&d_global_best_energy, sizeof(float)));
     CUDA_CHECK(cudaMalloc(&d_global_best_sol, (size_t)n_items * sizeof(unsigned char)));
 
-    // 新增：CUB Radix Sort 屬於 Out-of-place 排序，需要準備輸出的陣列
+    // 新增：CUB Radix Sort 輸出陣列
     float *d_energy_sorted = nullptr;
     int   *d_idx_sorted = nullptr;
     CUDA_CHECK(cudaMalloc(&d_energy_sorted, (size_t)N * sizeof(float)));
     CUDA_CHECK(cudaMalloc(&d_idx_sorted, (size_t)N * sizeof(int)));
 
-    // 新增：向 CUB 查詢排序 N 個元素需要多少暫存記憶體 (temp_storage)
+    // 新增：向 CUB 查詢暫存記憶體
     void *d_temp_storage = nullptr;
     size_t temp_storage_bytes = 0;
     cub::DeviceRadixSort::SortPairs(d_temp_storage, temp_storage_bytes,
                                     d_energy, d_energy_sorted,
                                     d_idx, d_idx_sorted, N);
 
-    // 預先配置好暫存記憶體，這樣迴圈內就不會有任何 cudaMalloc 開銷了
     CUDA_CHECK(cudaMalloc(&d_temp_storage, temp_storage_bytes));
 
-    // host buffers for reporting
     std::vector<unsigned char> best_sol_h(n_items);
 
     std::cout << "\n=======================================\n";
-    std::cout << "Start experiments\n";
-    std::cout << "Seed=" << seed << "\n";
+    std::cout << "Start experiment (Run ID: " << run_id << ")\n";
+    std::cout << "Seed=" << actual_seed << " (Base=" << base_seed << ")\n";
     std::cout << "P=" << P_penalty << ", Items=" << n_items << ", Capacity=" << C << "\n";
     std::cout << "N=" << N << ", Iter=" << iter << "\n";
     std::cout << "=======================================\n\n";
 
-    // init qindividuals to 1/sqrt(2)
+    // init qindividuals
     float init = 1.0f / std::sqrt(2.0f);
     std::vector<float> alpha_h(n_items, init), beta_h(n_items, init);
     CUDA_CHECK(cudaMemcpy(d_alpha, alpha_h.data(), (size_t)n_items * sizeof(float), cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMemcpy(d_beta,  beta_h.data(),  (size_t)n_items * sizeof(float), cudaMemcpyHostToDevice));
 
-    // 初始化 GPU 端的全域最佳能量為極大值
+    // 初始化 GPU 端的全域最佳能量
     float init_energy_val = 1e30f;
     CUDA_CHECK(cudaMemcpy(d_global_best_energy, &init_energy_val, sizeof(float), cudaMemcpyHostToDevice));
 
     // ---- Initial evaluation ----
     {
-        // 1) generate neighbours once
         int threads = 256;
         int blocks  = (total_measure_threads + threads - 1) / threads;
         generate_neighbours_kernel<<<blocks, threads>>>(d_alpha, d_beta, d_nei, N, n_items, d_states);
         CUDA_CHECK(cudaGetLastError());
 
-        // 2) energies (Optimized)
-        {
-            int threads = 256; // 對應上面的 BLOCK_THREADS
-            int blocks  = N;   // N=50，發射 50 個 Blocks
-            qubo_energy_kernel_optimized<256><<<blocks, threads>>>(d_nei, dQ, d_energy, n_items);
-            CUDA_CHECK(cudaGetLastError());
-        }
+        qubo_energy_kernel_optimized<256><<<N, 256>>>(d_nei, dQ, d_energy, n_items);
+        CUDA_CHECK(cudaGetLastError());
 
-        // 3) reset indices every iteration (取代 thrust::sequence)
-        {
-            int seq_threads = 256;
-            int seq_blocks = (N + seq_threads - 1) / seq_threads;
-            init_sequence_kernel<<<seq_blocks, seq_threads>>>(d_idx, N);
-        }
+        int seq_blocks = (N + threads - 1) / threads;
+        init_sequence_kernel<<<seq_blocks, threads>>>(d_idx, N);
 
-        // 4) sort by energy ascending (取代 thrust::sort_by_key)
-        {
-            cub::DeviceRadixSort::SortPairs(d_temp_storage, temp_storage_bytes,
-                                            d_energy, d_energy_sorted,
-                                            d_idx, d_idx_sorted, N);
-        }
+        cub::DeviceRadixSort::SortPairs(d_temp_storage, temp_storage_bytes,
+                                        d_energy, d_energy_sorted,
+                                        d_idx, d_idx_sorted, N);
 
-        // 5) update global best (注意這裡傳入的是 d_energy_sorted 與 d_idx_sorted)
-        {
-            int update_threads = 256;
-            update_global_best_kernel<<<1, update_threads>>>(d_energy_sorted, d_idx_sorted, d_nei, d_global_best_energy, d_global_best_sol, n_items);
-        }
+        update_global_best_kernel<<<1, 256>>>(d_energy_sorted, d_idx_sorted, d_nei, d_global_best_energy, d_global_best_sol, n_items);
     }
 
     // ---- Per-iteration timing ----
-    // 修正：計時器包在整個迴圈外，不計算 Kernel 啟動與 Host 端迴圈的微小開銷，更能反映真實的 GPU 執行時間
-    CUDA_CHECK(cudaDeviceSynchronize()); // 確保初始化的工作全數完成
+    CUDA_CHECK(cudaDeviceSynchronize());
     auto t0 = std::chrono::high_resolution_clock::now();
 
     for (int it = 0; it < iter; ++it) {
-        // 1) generate neighbours
-        {
-            int threads = 256;
-            int blocks  = (total_measure_threads + threads - 1) / threads;
-            generate_neighbours_kernel<<<blocks, threads>>>(d_alpha, d_beta, d_nei, N, n_items, d_states);
-            CUDA_CHECK(cudaGetLastError());
-        }
+        int threads = 256;
+        int blocks  = (total_measure_threads + threads - 1) / threads;
+        generate_neighbours_kernel<<<blocks, threads>>>(d_alpha, d_beta, d_nei, N, n_items, d_states);
 
-        // 2) energies (Optimized)
-        {
-            int threads = 256; // 對應上面的 BLOCK_THREADS
-            int blocks  = N;   // N=50，發射 50 個 Blocks
-            qubo_energy_kernel_optimized<256><<<blocks, threads>>>(d_nei, dQ, d_energy, n_items);
-            CUDA_CHECK(cudaGetLastError());
-        }
+        qubo_energy_kernel_optimized<256><<<N, 256>>>(d_nei, dQ, d_energy, n_items);
 
-        // 3) reset indices every iteration (取代 thrust::sequence)
-        {
-            int seq_threads = 256;
-            int seq_blocks = (N + seq_threads - 1) / seq_threads;
-            init_sequence_kernel<<<seq_blocks, seq_threads>>>(d_idx, N);
-        }
+        int seq_blocks = (N + threads - 1) / threads;
+        init_sequence_kernel<<<seq_blocks, threads>>>(d_idx, N);
 
-        // 4) sort by energy ascending (取代 thrust::sort_by_key)
-        {
-            cub::DeviceRadixSort::SortPairs(d_temp_storage, temp_storage_bytes,
-                                            d_energy, d_energy_sorted,
-                                            d_idx, d_idx_sorted, N);
-        }
+        cub::DeviceRadixSort::SortPairs(d_temp_storage, temp_storage_bytes,
+                                        d_energy, d_energy_sorted,
+                                        d_idx, d_idx_sorted, N);
 
-        // 5) update global best (注意這裡傳入的是 d_energy_sorted 與 d_idx_sorted)
-        {
-            int update_threads = 256;
-            update_global_best_kernel<<<1, update_threads>>>(d_energy_sorted, d_idx_sorted, d_nei, d_global_best_energy, d_global_best_sol, n_items);
-        }
+        update_global_best_kernel<<<1, 256>>>(d_energy_sorted, d_idx_sorted, d_nei, d_global_best_energy, d_global_best_sol, n_items);
 
-        // 6) updateQ uses sorted best/worst pairing (注意這裡傳入的是 d_idx_sorted)
-        {
-            int threads = 128;
-            int blocks  = (n_items + threads - 1) / threads;
-            updateQ_kernel<<<blocks, threads>>>(d_nei, d_idx_sorted, d_alpha, d_beta, N, n_items);
-        }
+        int update_threads = 128;
+        int update_blocks  = (n_items + update_threads - 1) / update_threads;
+        updateQ_kernel<<<update_blocks, update_threads>>>(d_nei, d_idx_sorted, d_alpha, d_beta, N, n_items);
     }
 
-    // 確保 1000 次迴圈的所有 Kernel 都執行完畢
     CUDA_CHECK(cudaDeviceSynchronize());
     auto t1 = std::chrono::high_resolution_clock::now();
     double total_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
@@ -254,10 +215,10 @@ int main(int argc, char** argv)
 
     bool valid = (final_w <= C + 1e-5f);
     std::cout << ": Energy=" << final_global_best_energy
-                << " | Val=" << final_v
-                << " | W=" << final_w << "/" << C
-                << " | " << (valid ? "VALID" : "OVERWEIGHT")
-                << " | AvgIter=" << avg_ms << " ms\n";
+              << " | Val=" << final_v
+              << " | W=" << final_w << "/" << C
+              << " | " << (valid ? "VALID" : "OVERWEIGHT")
+              << " | AvgIter=" << avg_ms << " ms\n";
 
     // cleanup
     CUDA_CHECK(cudaFree(d_states));
