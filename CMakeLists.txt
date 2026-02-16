@@ -13,7 +13,7 @@ if(BACKEND STREQUAL "CUDA")
     endif()
 
     enable_language(CUDA)
-    set(SRC_FILES src/aeqts_qubo.cu)
+    set(SRC_FILES src/main.cu)
 
     add_executable(aeqts_qubo ${SRC_FILES})
 
@@ -32,7 +32,7 @@ elseif(BACKEND STREQUAL "HIP")
     find_package(hiprand REQUIRED)
     find_package(rocthrust REQUIRED)
 
-    set(SRC_FILES src/aeqts_qubo.hip)
+    set(SRC_FILES src/main.hip)
 
     if(NOT DEFINED CMAKE_HIP_ARCHITECTURES)
         set(CMAKE_HIP_ARCHITECTURES "native")

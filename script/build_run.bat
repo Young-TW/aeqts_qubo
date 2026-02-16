@@ -7,8 +7,8 @@ nvcc -O2 -std=c++17 ^
     -arch=sm_75 ^
     -Xcompiler "/utf-8" ^
     -allow-unsupported-compiler ^
-    aeqts_knapsack_cuda.cu ^
-    -o aeqts_knapsack_cuda.exe
+    src/main.cu ^
+    -o main.exe
 
 if errorlevel 1 (
     echo [ERROR] Build failed.
@@ -19,7 +19,7 @@ if errorlevel 1 (
 echo [RUN] Executing program...
 echo.
 
-aeqts_knapsack_cuda.exe
+main.exe
 
 echo.
 echo [DONE]

@@ -7,8 +7,8 @@ echo "[BUILD] Compiling CUDA knapsack..."
 nvcc -O2 -std=c++17 \
     -arch=sm_75 \
     -allow-unsupported-compiler \
-    aeqts_knapsack_cuda.cu \
-    -o aeqts_knapsack_cuda
+    src/main.cu \
+    -o main
 
 # Check if the compilation command failed (return code not 0)
 if [ $? -ne 0 ]; then
@@ -21,7 +21,7 @@ echo "[RUN] Executing program..."
 echo ""
 
 # Execute the binary
-./aeqts_knapsack_cuda
+./main
 
 echo ""
 echo "[DONE]"
