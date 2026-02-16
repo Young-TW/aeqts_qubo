@@ -13,6 +13,7 @@ module purge
 
 # Load ROCm module
 module load rocm
+module load cmake
 
 # Configure for HIP backend in isolated build directory
 cmake -S . -B build -DBACKEND=HIP

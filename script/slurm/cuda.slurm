@@ -13,6 +13,7 @@ module purge
 
 # Load CUDA module
 module load cuda
+module load cmake
 
 # Configure for CUDA backend in isolated build directory
 cmake -S . -B build -DBACKEND=CUDA
