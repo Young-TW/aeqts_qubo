@@ -15,7 +15,7 @@ if(BACKEND STREQUAL "CUDA")
     enable_language(CUDA)
 
     include_directories(include)
-    set(SRC_FILES src/main.cu src/kernels.cu)
+    set(SRC_FILES src/main.cu src/kernels.cu src/qubo_matrix.cpp)
 
     add_executable(aeqts_qubo ${SRC_FILES})
 
