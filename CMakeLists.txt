@@ -13,6 +13,8 @@ if(BACKEND STREQUAL "CUDA")
     endif()
 
     enable_language(CUDA)
+
+    include_directories(include)
     set(SRC_FILES src/main.cu src/kernels.cu)
 
     add_executable(aeqts_qubo ${SRC_FILES})
@@ -26,6 +28,8 @@ if(BACKEND STREQUAL "CUDA")
 
 elseif(BACKEND STREQUAL "HIP")
     enable_language(HIP)
+
+    include_directories(include)
 
     list(APPEND CMAKE_PREFIX_PATH /opt/rocm)
 
