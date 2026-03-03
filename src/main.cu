@@ -7,6 +7,8 @@
 #include <chrono>
 #include <string>
 
+#include "qubo_matrix.h"
+
 // ------------------------------ Main ------------------------------
 int main(int argc, char** argv)
 {
