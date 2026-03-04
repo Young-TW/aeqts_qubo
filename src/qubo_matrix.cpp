@@ -2,18 +2,17 @@
 
 #include <cstdio>
 
-// ------------------------------ Host: build QUBO matrix ------------------------------
+// ------------------------------ Host: build QUBO matrix
+// ------------------------------
 std::vector<float> build_teacher_qubo_matrix_host(
-    const std::vector<float>& values,
-    const std::vector<float>& weights,
-    float capacity,
-    float P)
-{
+    const std::vector<float>& values, const std::vector<float>& weights,
+    float capacity, float P) {
     const int n = (int)values.size();
     std::vector<float> Q((size_t)n * (size_t)n, 0.0f);
 
     for (int i = 0; i < n; ++i) {
-        float coeff_linear = -values[i] + 2.0f * P * (weights[i] * weights[i]) - 2.0f * P * capacity * weights[i];
+        float coeff_linear = -values[i] + 2.0f * P * (weights[i] * weights[i]) -
+                             2.0f * P * capacity * weights[i];
         Q[(size_t)i * n + i] = coeff_linear;
 
         for (int j = i + 1; j < n; ++j) {
