@@ -38,7 +38,7 @@ elseif(BACKEND STREQUAL "HIP")
     find_package(hiprand REQUIRED)
     find_package(rocthrust REQUIRED)
 
-    set(SRC_FILES src/main.hip)
+    set(SRC_FILES src/origin/aeqts_qubo.hip)
 
     if(NOT DEFINED CMAKE_HIP_ARCHITECTURES)
         set(CMAKE_HIP_ARCHITECTURES "native")
