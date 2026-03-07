@@ -23,7 +23,7 @@ jobs:
         sub-packages: '["nvcc", "cudart-dev"]'
 
     - name: Install cuRAND library
-      run: sudo apt-get install -y libcurand-dev-12-3
+      run: sudo apt-get install -y libcurand-dev-12-3 openmpi-bin libopenmpi-dev
 
     # Configure CMake
     - name: Configure CMake (CUDA)
