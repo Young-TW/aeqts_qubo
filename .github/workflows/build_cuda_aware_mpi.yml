@@ -1,0 +1,38 @@
+name: Build CUDA-aware MPI
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+
+jobs:
+    # Build for CUDA
+  build-cuda:
+    runs-on: ubuntu-22.04
+    steps:
+    - uses: actions/checkout@v4
+
+    # Install CUDA Toolkit
+    # removed "curand-dev", because the action produces an incorrect package name
+    - name: Set up CUDA Toolkit
+      uses: Jimver/cuda-toolkit@v0.2.14
+      with:
+        cuda: '12.3.0'
+        method: 'network'
+        sub-packages: '["nvcc", "cudart-dev"]'
+
+    - name: Install cuRAND library
+      run: sudo apt-get install -y libcurand-dev-12-3
+
+    # Configure CMake
+    - name: Configure CMake (CUDA)
+      run: >
+        cmake -B build
+        -DBACKEND=CUDA
+        -DCMAKE_BUILD_TYPE=Release
+        -DCMAKE_CUDA_ARCHITECTURES=75
+
+    # Build the project
+    - name: Build (CUDA)
+      run: cmake --build build --verbose
