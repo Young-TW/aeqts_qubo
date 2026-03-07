@@ -25,4 +25,4 @@ export UCX_MEMTYPE_CACHE=n
 export UCX_TLS=rc,cuda_copy,cuda_ipc
 export OMPI_MCA_pml=ucx
 
-mpirun ./build/aeqts_qubo --items 500 --N 50 --iter 1000
+mpirun ./build/aeqts_qubo --items 5000 --N 50 -P 10000 --iter 5000

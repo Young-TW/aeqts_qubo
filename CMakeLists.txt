@@ -1,27 +1,34 @@
 cmake_minimum_required(VERSION 3.21)
-project(aeqts_qubo_cuda LANGUAGES CXX)
+project(aeqts_qubo LANGUAGES CXX)
 
 set(BACKEND "CUDA" CACHE STRING "Choose the backend (CUDA or HIP)")
 set_property(CACHE BACKEND PROPERTY STRINGS "CUDA" "HIP")
 
+# add MPI option, default is OFF (Standalone)
+option(ENABLE_MPI "Enable MPI support (CUDA-aware or HIP-aware)" OFF)
+
+if(ENABLE_MPI)
+    find_package(MPI REQUIRED)
+endif()
+
+include_directories(include)
+
 if(BACKEND STREQUAL "CUDA")
     if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
-        # if the user hasn't specified architectures, use "native" to target the current GPU
-        # set(CMAKE_CUDA_ARCHITECTURES "native")
-        # this repo is for h100/h200, so we can set the architecture to "90" for better performance
         set(CMAKE_CUDA_ARCHITECTURES "90")
     endif()
 
     enable_language(CUDA)
 
-    find_package(MPI REQUIRED)
-
-    include_directories(include)
     set(SRC_FILES src/main.cu src/kernels.cu src/qubo_matrix.cpp)
-
     add_executable(aeqts_qubo ${SRC_FILES})
 
-    target_link_libraries(aeqts_qubo PRIVATE curand MPI::MPI_CXX)
+    target_link_libraries(aeqts_qubo PRIVATE curand)
+
+    if(ENABLE_MPI)
+        target_link_libraries(aeqts_qubo PRIVATE MPI::MPI_CXX)
+        target_compile_definitions(aeqts_qubo PRIVATE USE_MPI)
+    endif()
 
     set_target_properties(aeqts_qubo PROPERTIES
         CUDA_SEPARABLE_COMPILATION ON
@@ -30,8 +37,6 @@ if(BACKEND STREQUAL "CUDA")
 
 elseif(BACKEND STREQUAL "HIP")
     enable_language(HIP)
-
-    include_directories(include)
 
     list(APPEND CMAKE_PREFIX_PATH /opt/rocm)
 
@@ -50,6 +55,11 @@ elseif(BACKEND STREQUAL "HIP")
         hip::hiprand
         roc::rocthrust
     )
+
+    if(ENABLE_MPI)
+        target_link_libraries(aeqts_qubo PRIVATE MPI::MPI_CXX)
+        target_compile_definitions(aeqts_qubo PRIVATE USE_MPI)
+    endif()
 
     set_target_properties(aeqts_qubo PROPERTIES
         HIP_STANDARD 17

@@ -10,14 +10,14 @@
 
 // ------------------------------ Main ------------------------------
 int main(int argc, char** argv) {
+    // ====== 預設參數 (Match your classmate defaults) ======
     int iter = 1000;
     int n_items = 500;
     int N = 50;
     unsigned long long base_seed = 12345ULL;
-    int run_id = 0;
-    double P_penalty = 10.0;
+    int run_id = 0;  // 用於區別不同的 Slurm Task，預設 0 代表單次測試
 
-    // ---- CLI args parse ----
+    // ---- CLI 參數解析 ----
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "--seed" && i + 1 < argc) {
@@ -30,31 +30,34 @@ int main(int argc, char** argv) {
             iter = std::stoi(argv[++i]);
         } else if (arg == "--run_id" && i + 1 < argc) {
             run_id = std::stoi(argv[++i]);
-        } else if ((arg == "-P" || arg == "--penalty") && i + 1 < argc) {
-            P_penalty = std::stod(argv[++i]);
         } else if (i == 1 && !arg.empty() && arg[0] != '-') {
+            // 保留相容性：允許第一個位置參數直接作為 seed
             base_seed = std::stoull(arg);
         }
     }
 
+    // 計算實際種子 (避免 Slurm Array 多個平行任務跑出一樣的結果)
     unsigned long long actual_seed = base_seed + run_id;
 
-    std::vector<double> weights(n_items), values(n_items);
+    // weights: items = mod(range,10)+1 ; values=items+5 ; C = sum(weights)/2
+    std::vector<float> weights(n_items), values(n_items);
     for (int i = 0; i < n_items; ++i) {
-        double w = (double)((i % 10) + 1);
+        float w = (float)((i % 10) + 1);
         weights[i] = w;
-        values[i] = w + 5.0;
+        values[i] = w + 5.0f;
     }
-    double sum_w = std::accumulate(weights.begin(), weights.end(), 0.0);
-    double C = sum_w / 2.0;
+    float sum_w = std::accumulate(weights.begin(), weights.end(), 0.0f);
+    float C = sum_w / 2.0f;
+
+    float P_penalty = 10.0f;
 
     std::cout << "Building QUBO matrix (Teacher formulation)...\n";
-    std::vector<double> Qh =
+    std::vector<float> Qh =
         build_teacher_qubo_matrix_host(values, weights, C, P_penalty);
 
     // ====== Device allocations ======
-    double* dQ = nullptr;
-    double* d_energy = nullptr;
+    float* dQ = nullptr;
+    float* d_energy = nullptr;
     int* d_idx = nullptr;
     unsigned char* d_nei = nullptr;
     float *d_alpha = nullptr, *d_beta = nullptr;
@@ -63,12 +66,12 @@ int main(int argc, char** argv) {
     int total_measure_threads = N * n_items;
 
     CUDA_CHECK(
-        cudaMalloc(&dQ, (size_t)n_items * (size_t)n_items * sizeof(double)));
+        cudaMalloc(&dQ, (size_t)n_items * (size_t)n_items * sizeof(float)));
     CUDA_CHECK(cudaMemcpy(dQ, Qh.data(),
-                          (size_t)n_items * (size_t)n_items * sizeof(double),
+                          (size_t)n_items * (size_t)n_items * sizeof(float),
                           cudaMemcpyHostToDevice));
 
-    CUDA_CHECK(cudaMalloc(&d_energy, (size_t)N * sizeof(double)));
+    CUDA_CHECK(cudaMalloc(&d_energy, (size_t)N * sizeof(float)));
     CUDA_CHECK(cudaMalloc(&d_idx, (size_t)N * sizeof(int)));
     CUDA_CHECK(cudaMalloc(&d_nei,
                           (size_t)N * (size_t)n_items * sizeof(unsigned char)));
@@ -89,17 +92,20 @@ int main(int argc, char** argv) {
         CUDA_CHECK(cudaDeviceSynchronize());
     }
 
-    double* d_global_best_energy = nullptr;
+    // 新增：在 Device 端配置存放「全局最佳解」的空間
+    float* d_global_best_energy = nullptr;
     unsigned char* d_global_best_sol = nullptr;
-    CUDA_CHECK(cudaMalloc(&d_global_best_energy, sizeof(double)));
+    CUDA_CHECK(cudaMalloc(&d_global_best_energy, sizeof(float)));
     CUDA_CHECK(cudaMalloc(&d_global_best_sol,
                           (size_t)n_items * sizeof(unsigned char)));
 
-    double* d_energy_sorted = nullptr;
+    // 新增：CUB Radix Sort 輸出陣列
+    float* d_energy_sorted = nullptr;
     int* d_idx_sorted = nullptr;
-    CUDA_CHECK(cudaMalloc(&d_energy_sorted, (size_t)N * sizeof(double)));
+    CUDA_CHECK(cudaMalloc(&d_energy_sorted, (size_t)N * sizeof(float)));
     CUDA_CHECK(cudaMalloc(&d_idx_sorted, (size_t)N * sizeof(int)));
 
+    // 新增：向 CUB 查詢暫存記憶體
     void* d_temp_storage = nullptr;
     size_t temp_storage_bytes = 0;
     cub::DeviceRadixSort::SortPairs(d_temp_storage, temp_storage_bytes,
@@ -107,7 +113,8 @@ int main(int argc, char** argv) {
                                     d_idx_sorted, N);
 
     CUDA_CHECK(cudaMalloc(&d_temp_storage, temp_storage_bytes));
-std::vector<unsigned char> best_sol_h(n_items);
+
+    std::vector<unsigned char> best_sol_h(n_items);
 
     std::cout << "\n=======================================\n";
     std::cout << "Start experiment (Run ID: " << run_id << ")\n";
@@ -117,6 +124,7 @@ std::vector<unsigned char> best_sol_h(n_items);
     std::cout << "N=" << N << ", Iter=" << iter << "\n";
     std::cout << "=======================================\n\n";
 
+    // init qindividuals
     float init = 1.0f / std::sqrt(2.0f);
     std::vector<float> alpha_h(n_items, init), beta_h(n_items, init);
     CUDA_CHECK(cudaMemcpy(d_alpha, alpha_h.data(),
@@ -126,9 +134,9 @@ std::vector<unsigned char> best_sol_h(n_items);
                           (size_t)n_items * sizeof(float),
                           cudaMemcpyHostToDevice));
 
-    // Initialize GPU global best energy (use double)
-    double init_energy_val = 1e30;
-    CUDA_CHECK(cudaMemcpy(d_global_best_energy, &init_energy_val, sizeof(double),
+    // 初始化 GPU 端的全域最佳能量
+    float init_energy_val = 1e30f;
+    CUDA_CHECK(cudaMemcpy(d_global_best_energy, &init_energy_val, sizeof(float),
                           cudaMemcpyHostToDevice));
 
     // ---- Initial evaluation ----
@@ -190,14 +198,17 @@ std::vector<unsigned char> best_sol_h(n_items);
     double total_ms =
         std::chrono::duration<double, std::milli>(t1 - t0).count();
     double avg_ms = total_ms / (double)iter;
-double final_global_best_energy = 0.0;
+
+    // 迴圈結束後，將結果抓回 CPU 進行驗證
+    float final_global_best_energy = 0.0f;
     CUDA_CHECK(cudaMemcpy(&final_global_best_energy, d_global_best_energy,
-                          sizeof(double), cudaMemcpyDeviceToHost));
+                          sizeof(float), cudaMemcpyDeviceToHost));
     CUDA_CHECK(cudaMemcpy(best_sol_h.data(), d_global_best_sol,
                           (size_t)n_items * sizeof(unsigned char),
                           cudaMemcpyDeviceToHost));
 
-    double final_w = 0.0, final_v = 0.0;
+    // compute real value & weight on host
+    float final_w = 0.0f, final_v = 0.0f;
     for (int i = 0; i < n_items; ++i) {
         if (best_sol_h[i]) {
             final_w += weights[i];
@@ -205,7 +216,7 @@ double final_global_best_energy = 0.0;
         }
     }
 
-    bool valid = (final_w <= C + 1e-5);
+    bool valid = (final_w <= C + 1e-5f);
     std::cout << ": Energy=" << final_global_best_energy << " | Val=" << final_v
               << " | W=" << final_w << "/" << C << " | "
               << (valid ? "VALID" : "OVERWEIGHT") << " | AvgIter=" << avg_ms

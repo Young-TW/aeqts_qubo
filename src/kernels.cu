@@ -73,13 +73,13 @@ __global__ void updateQ_kernel(const unsigned char* __restrict__ neighbours,
 }
 
 __global__ void update_global_best_kernel(
-    const float* __restrict__ sorted_energies,
+    const double* __restrict__ sorted_energies,
     const int* __restrict__ sorted_idx,
     const unsigned char* __restrict__ neighbours,
-    float* __restrict__ global_best_energy,
+    double* __restrict__ global_best_energy,
     unsigned char* __restrict__ global_best_sol, int n_items) {
     if (blockIdx.x == 0) {
-        float current_best = sorted_energies[0];
+        double current_best = sorted_energies[0];
         if (current_best < *global_best_energy) {
             if (threadIdx.x == 0) {
                 *global_best_energy = current_best;

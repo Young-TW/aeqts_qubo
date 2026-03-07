@@ -37,10 +37,10 @@ __global__ void updateQ_kernel(
     int n_items);
 
 __global__ void update_global_best_kernel(
-    const float* __restrict__ sorted_energies,
+    const double* __restrict__ sorted_energies,
     const int* __restrict__ sorted_idx,
     const unsigned char* __restrict__ neighbours,
-    float* __restrict__ global_best_energy,
+    double* __restrict__ global_best_energy,
     unsigned char* __restrict__ global_best_sol, int n_items);
 
 // ------------------------------ Template Kernel 實作
@@ -48,19 +48,19 @@ __global__ void update_global_best_kernel(
 template <int BLOCK_THREADS>
 __global__ void qubo_energy_kernel_optimized(
     const unsigned char* __restrict__ neighbours,  // N x n_items
-    const float* __restrict__ Q,                   // n_items x n_items
-    float* __restrict__ energies,                  // N
+    const double* __restrict__ Q,                   // n_items x n_items
+    double* __restrict__ energies,                  // N
     int n_items) {
     int nbr = blockIdx.x;
     int tid = threadIdx.x;
 
     const unsigned char* x = neighbours + (size_t)nbr * n_items;
 
-    float thread_sum = 0.0f;
+    double thread_sum = 0.0;
 
     for (int i = tid; i < n_items; i += BLOCK_THREADS) {
         if (x[i]) {
-            const float* Qi = Q + (size_t)i * n_items;
+            const double* Qi = Q + (size_t)i * n_items;
             for (int j = 0; j < n_items; ++j) {
                 if (x[j]) {
                     thread_sum += Qi[j];
@@ -69,10 +69,10 @@ __global__ void qubo_energy_kernel_optimized(
         }
     }
 
-    typedef cub::BlockReduce<float, BLOCK_THREADS> BlockReduce;
+    typedef cub::BlockReduce<double, BLOCK_THREADS> BlockReduce;
     __shared__ typename BlockReduce::TempStorage temp_storage;
 
-    float block_sum = BlockReduce(temp_storage).Sum(thread_sum);
+    double block_sum = BlockReduce(temp_storage).Sum(thread_sum);
 
     if (tid == 0) {
         energies[nbr] = block_sum;
