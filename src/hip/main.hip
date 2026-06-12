@@ -6,7 +6,7 @@
 #include <vector>
 
 #include "config.h"
-#include "kernels.cuh"
+#include "kernels.hpp"
 #include "qubo_matrix.h"
 
 #ifdef USE_MPI
@@ -30,8 +30,8 @@ int main(int argc, char** argv) {
     MPI_Comm_free(&node_comm);
 
     int device_count = 0;
-    CUDA_CHECK(cudaGetDeviceCount(&device_count));
-    CUDA_CHECK(cudaSetDevice(local_rank % device_count));
+    CUDA_CHECK(hipGetDeviceCount(&device_count));
+    CUDA_CHECK(hipSetDevice(local_rank % device_count));
 #else
     const int world_rank = 0, world_size = 1;
 #endif
@@ -114,25 +114,25 @@ int main(int argc, char** argv) {
     unsigned char* d_nei = nullptr;
     float *d_alpha = nullptr, *d_beta = nullptr;
 
-    curandStatePhilox4_32_10_t* d_states = nullptr;
+    hiprandStatePhilox4_32_10_t* d_states = nullptr;
     int total_measure_threads = N * n_items;
 
     CUDA_CHECK(
-        cudaMalloc(&dQ, (size_t)n_items * (size_t)n_items * sizeof(double)));
-    CUDA_CHECK(cudaMemcpy(dQ, Qh.data(),
+        hipMalloc(&dQ, (size_t)n_items * (size_t)n_items * sizeof(double)));
+    CUDA_CHECK(hipMemcpy(dQ, Qh.data(),
                           (size_t)n_items * (size_t)n_items * sizeof(double),
-                          cudaMemcpyHostToDevice));
+                          hipMemcpyHostToDevice));
 
-    CUDA_CHECK(cudaMalloc(&d_energy, (size_t)N * sizeof(double)));
-    CUDA_CHECK(cudaMalloc(&d_idx, (size_t)N * sizeof(int)));
-    CUDA_CHECK(cudaMalloc(&d_nei,
+    CUDA_CHECK(hipMalloc(&d_energy, (size_t)N * sizeof(double)));
+    CUDA_CHECK(hipMalloc(&d_idx, (size_t)N * sizeof(int)));
+    CUDA_CHECK(hipMalloc(&d_nei,
                           (size_t)N * (size_t)n_items * sizeof(unsigned char)));
 
-    CUDA_CHECK(cudaMalloc(&d_alpha, (size_t)n_items * sizeof(float)));
-    CUDA_CHECK(cudaMalloc(&d_beta, (size_t)n_items * sizeof(float)));
+    CUDA_CHECK(hipMalloc(&d_alpha, (size_t)n_items * sizeof(float)));
+    CUDA_CHECK(hipMalloc(&d_beta, (size_t)n_items * sizeof(float)));
 
-    CUDA_CHECK(cudaMalloc(&d_states, (size_t)total_measure_threads *
-                                         sizeof(curandStatePhilox4_32_10_t)));
+    CUDA_CHECK(hipMalloc(&d_states, (size_t)total_measure_threads *
+                                         sizeof(hiprandStatePhilox4_32_10_t)));
 
     // init RNG
     {
@@ -140,28 +140,28 @@ int main(int argc, char** argv) {
         int blocks = (total_measure_threads + threads - 1) / threads;
         init_curand_states<<<blocks, threads>>>(d_states, actual_seed,
                                                 total_measure_threads);
-        CUDA_CHECK(cudaGetLastError());
-        CUDA_CHECK(cudaDeviceSynchronize());
+        CUDA_CHECK(hipGetLastError());
+        CUDA_CHECK(hipDeviceSynchronize());
     }
 
     double* d_global_best_energy = nullptr;
     unsigned char* d_global_best_sol = nullptr;
-    CUDA_CHECK(cudaMalloc(&d_global_best_energy, sizeof(double)));
-    CUDA_CHECK(cudaMalloc(&d_global_best_sol,
+    CUDA_CHECK(hipMalloc(&d_global_best_energy, sizeof(double)));
+    CUDA_CHECK(hipMalloc(&d_global_best_sol,
                           (size_t)n_items * sizeof(unsigned char)));
 
     double* d_energy_sorted = nullptr;
     int* d_idx_sorted = nullptr;
-    CUDA_CHECK(cudaMalloc(&d_energy_sorted, (size_t)N * sizeof(double)));
-    CUDA_CHECK(cudaMalloc(&d_idx_sorted, (size_t)N * sizeof(int)));
+    CUDA_CHECK(hipMalloc(&d_energy_sorted, (size_t)N * sizeof(double)));
+    CUDA_CHECK(hipMalloc(&d_idx_sorted, (size_t)N * sizeof(int)));
 
     void* d_temp_storage = nullptr;
     size_t temp_storage_bytes = 0;
-    cub::DeviceRadixSort::SortPairs(d_temp_storage, temp_storage_bytes,
+    hipcub::DeviceRadixSort::SortPairs(d_temp_storage, temp_storage_bytes,
                                     d_energy, d_energy_sorted, d_idx,
                                     d_idx_sorted, N);
 
-    CUDA_CHECK(cudaMalloc(&d_temp_storage, temp_storage_bytes));
+    CUDA_CHECK(hipMalloc(&d_temp_storage, temp_storage_bytes));
     std::vector<unsigned char> best_sol_h(n_items);
 
     if (world_rank == 0) {
@@ -177,17 +177,17 @@ int main(int argc, char** argv) {
 
     float init = 1.0f / std::sqrt(2.0f);
     std::vector<float> alpha_h(n_items, init), beta_h(n_items, init);
-    CUDA_CHECK(cudaMemcpy(d_alpha, alpha_h.data(),
+    CUDA_CHECK(hipMemcpy(d_alpha, alpha_h.data(),
                           (size_t)n_items * sizeof(float),
-                          cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(d_beta, beta_h.data(),
+                          hipMemcpyHostToDevice));
+    CUDA_CHECK(hipMemcpy(d_beta, beta_h.data(),
                           (size_t)n_items * sizeof(float),
-                          cudaMemcpyHostToDevice));
+                          hipMemcpyHostToDevice));
 
     // Initialize GPU global best energy (use double)
     double init_energy_val = 1e30;
-    CUDA_CHECK(cudaMemcpy(d_global_best_energy, &init_energy_val,
-                          sizeof(double), cudaMemcpyHostToDevice));
+    CUDA_CHECK(hipMemcpy(d_global_best_energy, &init_energy_val,
+                          sizeof(double), hipMemcpyHostToDevice));
 
     // ---- Initial evaluation ----
     {
@@ -195,16 +195,16 @@ int main(int argc, char** argv) {
         int blocks = (total_measure_threads + threads - 1) / threads;
         generate_neighbours_kernel<<<blocks, threads>>>(d_alpha, d_beta, d_nei,
                                                         N, n_items, d_states);
-        CUDA_CHECK(cudaGetLastError());
+        CUDA_CHECK(hipGetLastError());
 
         qubo_energy_kernel_optimized<256>
             <<<N, 256>>>(d_nei, dQ, d_energy, n_items);
-        CUDA_CHECK(cudaGetLastError());
+        CUDA_CHECK(hipGetLastError());
 
         int seq_blocks = (N + threads - 1) / threads;
         init_sequence_kernel<<<seq_blocks, threads>>>(d_idx, N);
 
-        cub::DeviceRadixSort::SortPairs(d_temp_storage, temp_storage_bytes,
+        hipcub::DeviceRadixSort::SortPairs(d_temp_storage, temp_storage_bytes,
                                         d_energy, d_energy_sorted, d_idx,
                                         d_idx_sorted, N);
 
@@ -214,7 +214,7 @@ int main(int argc, char** argv) {
     }
 
     // ---- Per-iteration timing ----
-    CUDA_CHECK(cudaDeviceSynchronize());
+    CUDA_CHECK(hipDeviceSynchronize());
     auto t0 = std::chrono::high_resolution_clock::now();
 
     for (int it = 0; it < iter; ++it) {
@@ -229,7 +229,7 @@ int main(int argc, char** argv) {
         int seq_blocks = (N + threads - 1) / threads;
         init_sequence_kernel<<<seq_blocks, threads>>>(d_idx, N);
 
-        cub::DeviceRadixSort::SortPairs(d_temp_storage, temp_storage_bytes,
+        hipcub::DeviceRadixSort::SortPairs(d_temp_storage, temp_storage_bytes,
                                         d_energy, d_energy_sorted, d_idx,
                                         d_idx_sorted, N);
 
@@ -243,17 +243,17 @@ int main(int argc, char** argv) {
             d_nei, d_idx_sorted, d_alpha, d_beta, N, n_items);
     }
 
-    CUDA_CHECK(cudaDeviceSynchronize());
+    CUDA_CHECK(hipDeviceSynchronize());
     auto t1 = std::chrono::high_resolution_clock::now();
     double total_ms =
         std::chrono::duration<double, std::milli>(t1 - t0).count();
     double avg_ms = total_ms / (double)iter;
     double final_global_best_energy = 0.0;
-    CUDA_CHECK(cudaMemcpy(&final_global_best_energy, d_global_best_energy,
-                          sizeof(double), cudaMemcpyDeviceToHost));
-    CUDA_CHECK(cudaMemcpy(best_sol_h.data(), d_global_best_sol,
+    CUDA_CHECK(hipMemcpy(&final_global_best_energy, d_global_best_energy,
+                          sizeof(double), hipMemcpyDeviceToHost));
+    CUDA_CHECK(hipMemcpy(best_sol_h.data(), d_global_best_sol,
                           (size_t)n_items * sizeof(unsigned char),
-                          cudaMemcpyDeviceToHost));
+                          hipMemcpyDeviceToHost));
 
     int best_rank = world_rank;
 #ifdef USE_MPI
@@ -291,18 +291,18 @@ int main(int argc, char** argv) {
     }
 
     // cleanup
-    CUDA_CHECK(cudaFree(d_states));
-    CUDA_CHECK(cudaFree(d_beta));
-    CUDA_CHECK(cudaFree(d_alpha));
-    CUDA_CHECK(cudaFree(d_nei));
-    CUDA_CHECK(cudaFree(d_idx));
-    CUDA_CHECK(cudaFree(d_energy));
-    CUDA_CHECK(cudaFree(dQ));
-    CUDA_CHECK(cudaFree(d_global_best_energy));
-    CUDA_CHECK(cudaFree(d_global_best_sol));
-    CUDA_CHECK(cudaFree(d_temp_storage));
-    CUDA_CHECK(cudaFree(d_idx_sorted));
-    CUDA_CHECK(cudaFree(d_energy_sorted));
+    CUDA_CHECK(hipFree(d_states));
+    CUDA_CHECK(hipFree(d_beta));
+    CUDA_CHECK(hipFree(d_alpha));
+    CUDA_CHECK(hipFree(d_nei));
+    CUDA_CHECK(hipFree(d_idx));
+    CUDA_CHECK(hipFree(d_energy));
+    CUDA_CHECK(hipFree(dQ));
+    CUDA_CHECK(hipFree(d_global_best_energy));
+    CUDA_CHECK(hipFree(d_global_best_sol));
+    CUDA_CHECK(hipFree(d_temp_storage));
+    CUDA_CHECK(hipFree(d_idx_sorted));
+    CUDA_CHECK(hipFree(d_energy_sorted));
 
 #ifdef USE_MPI
     MPI_Finalize();

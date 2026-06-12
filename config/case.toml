@@ -1,0 +1,10 @@
+# AEQTS + QUBO 實驗參數
+# 格式為簡易的 `key = value;`,可用 # 或 // 註解。
+# 命令列參數(--iter / --items / --N / --seed / --run_id / -P)會覆寫此處的值。
+
+iter = 1000;        # 迭代代數
+n_items = 500;      # 物品數量 (問題維度)
+N = 50;             # 種群大小 (量子染色體數)
+base_seed = 12345;  # 亂數基礎種子
+run_id = 0;         # 執行編號 (Slurm array index)
+P_penalty = 10.0;   # 超重懲罰係數

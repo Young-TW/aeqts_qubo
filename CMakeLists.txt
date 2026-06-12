@@ -41,9 +41,13 @@ elseif(BACKEND STREQUAL "HIP")
     list(APPEND CMAKE_PREFIX_PATH /opt/rocm)
 
     find_package(hiprand REQUIRED)
-    find_package(rocthrust REQUIRED)
+    find_package(hipcub REQUIRED)
 
-    set(SRC_FILES src/origin/aeqts_qubo.hip)
+    set(SRC_FILES src/hip/main.hip src/hip/kernels.hip src/qubo_matrix.cpp)
+
+    # qubo_matrix.cpp 是純 host 程式碼,但交由 HIP 編譯器(clang++)處理,
+    # 以免 CXX 編譯器收到 --offload-arch 等 HIP 專屬旗標而報錯。
+    set_source_files_properties(src/qubo_matrix.cpp PROPERTIES LANGUAGE HIP)
 
     if(NOT DEFINED CMAKE_HIP_ARCHITECTURES)
         set(CMAKE_HIP_ARCHITECTURES "native")
@@ -53,7 +57,7 @@ elseif(BACKEND STREQUAL "HIP")
 
     target_link_libraries(aeqts_qubo PRIVATE
         hip::hiprand
-        roc::rocthrust
+        hip::hipcub
     )
 
     if(ENABLE_MPI)
