@@ -1,0 +1,52 @@
+# clangd 設定 — AEQTS + QUBO (CUDA/HIP) 專案
+#
+# clangd 使用 clang 自帶的 CUDA/HIP 前端來解析 .cu/.cuh/.hip。
+# 若在有 nvcc 的機器上產生 compile_commands.json
+# (cmake ... -DCMAKE_EXPORT_COMPILE_COMMANDS=ON),clangd 會讀取它,
+# 而下方的 Remove 清單負責剝掉 clang 看不懂的 nvcc 專用旗標。
+# 沒有 compile_commands.json 時,Add 清單提供最低限度可解析的設定。
+#
+# 註:需要本機安裝 CUDA Toolkit(CachyOS/Arch 預設在 /opt/cuda)。
+#     若路徑不同,於下方 Add 加上 --cuda-path=<your_cuda_root>。
+
+CompileFlags:
+  Compiler: clang++
+  Add:
+    - -std=c++17
+    - -Iinclude
+    - -DUSE_MPI          # 讓 clangd 分析 MPI 島嶼模型分支
+  Remove:
+    - -forward-unknown-to-host-compiler
+    - --generate-code*
+    - -gencode*
+    - --options-file
+    - -rdc=*
+    - -ccbin*
+    - --compiler-options*
+    - -Xcompiler*
+    - -Xcudafe*
+    - --expt-*
+    - --extended-lambda
+
+Diagnostics:
+  UnusedIncludes: None
+  Suppress:
+    - variadic_device_fn          # clang-CUDA 對 <<<>>> 的誤報
+    - undeclared_var_use_suggest
+
+---
+# CUDA translation units
+If:
+  PathMatch: [.*\.cu, .*\.cuh]
+CompileFlags:
+  Add:
+    - -xcuda
+    - --cuda-gpu-arch=sm_90        # 對應 CMAKE_CUDA_ARCHITECTURES=90
+
+---
+# HIP translation unit (src/origin/aeqts_qubo.hip)
+If:
+  PathMatch: .*\.hip
+CompileFlags:
+  Add:
+    - -xhip
