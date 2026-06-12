@@ -20,7 +20,7 @@ jobs:
       - name: Install Dependencies
         run: |
           apt-get update
-          apt-get install -y rocthrust-dev hiprand-dev rocrand-dev hipcub-devcmake git
+          apt-get install -y rocthrust-dev hiprand-dev rocrand-dev hipcub-dev cmake git
 
       - name: Configure CMake (HIP)
         run: >
