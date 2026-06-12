@@ -20,7 +20,12 @@ if(BACKEND STREQUAL "CUDA")
 
     enable_language(CUDA)
 
-    set(SRC_FILES src/main.cu src/kernels.cu src/qubo_matrix.cpp)
+    # 純 C++ 入口 + host 工具,GPU 程式碼集中在 src/cuda/
+    set(SRC_FILES
+        src/main.cpp
+        src/qubo_matrix.cpp
+        src/cuda/solver.cu
+        src/cuda/kernels.cu)
     add_executable(aeqts_qubo ${SRC_FILES})
 
     target_link_libraries(aeqts_qubo PRIVATE curand)
@@ -41,9 +46,19 @@ elseif(BACKEND STREQUAL "HIP")
     list(APPEND CMAKE_PREFIX_PATH /opt/rocm)
 
     find_package(hiprand REQUIRED)
-    find_package(rocthrust REQUIRED)
+    find_package(hipcub REQUIRED)
 
-    set(SRC_FILES src/origin/aeqts_qubo.hip)
+    # 純 C++ 入口 + host 工具,GPU 程式碼集中在 src/hip/
+    set(SRC_FILES
+        src/main.cpp
+        src/qubo_matrix.cpp
+        src/hip/solver.hip
+        src/hip/kernels.hip)
+
+    # main.cpp / qubo_matrix.cpp 是純 host 程式碼,但交由 HIP 編譯器(clang++)
+    # 處理,以免 CXX 編譯器收到 --offload-arch 等 HIP 專屬旗標而報錯。
+    set_source_files_properties(src/main.cpp src/qubo_matrix.cpp
+                                PROPERTIES LANGUAGE HIP)
 
     if(NOT DEFINED CMAKE_HIP_ARCHITECTURES)
         set(CMAKE_HIP_ARCHITECTURES "native")
@@ -53,7 +68,7 @@ elseif(BACKEND STREQUAL "HIP")
 
     target_link_libraries(aeqts_qubo PRIVATE
         hip::hiprand
-        roc::rocthrust
+        hip::hipcub
     )
 
     if(ENABLE_MPI)

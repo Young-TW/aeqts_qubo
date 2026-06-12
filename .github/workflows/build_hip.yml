@@ -2,9 +2,9 @@ name: Build HIP
 
 on:
   push:
-    branches: [ "main", "master" ]
+    branches: ["main", "master"]
   pull_request:
-    branches: [ "main", "master" ]
+    branches: ["main", "master"]
 
 jobs:
   # Build for HIP (ROCm)
@@ -15,19 +15,19 @@ jobs:
       image: rocm/dev-ubuntu-22.04:7.2 # Adjust ROCm version as needed
       options: --user root
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Install Dependencies
-      run: |
-        apt-get update
-        apt-get install -y rocthrust-dev hiprand-dev rocrand-dev cmake git
+      - name: Install Dependencies
+        run: |
+          apt-get update
+          apt-get install -y rocthrust-dev hiprand-dev rocrand-dev hipcub-dev cmake git
 
-    - name: Configure CMake (HIP)
-      run: >
-        cmake -B build
-        -DBACKEND=HIP
-        -DCMAKE_BUILD_TYPE=Release
-        -DCMAKE_HIP_ARCHITECTURES=gfx90a
+      - name: Configure CMake (HIP)
+        run: >
+          cmake -B build
+          -DBACKEND=HIP
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_HIP_ARCHITECTURES=gfx90a
 
-    - name: Build (HIP)
-      run: cmake --build build --verbose
+      - name: Build (HIP)
+        run: cmake --build build --verbose

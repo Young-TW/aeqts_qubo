@@ -1,56 +1,23 @@
 #include <chrono>
-#include <cstdio>
-#include <iostream>
-#include <numeric>
-#include <string>
+#include <cmath>
 #include <vector>
 
 #include "kernels.cuh"
-#include "qubo_matrix.h"
+#include "solver.h"
 
-// ------------------------------ Main ------------------------------
-int main(int argc, char** argv) {
-    int iter = 1000;
-    int n_items = 500;
-    int N = 50;
-    unsigned long long base_seed = 12345ULL;
-    int run_id = 0;
-    double P_penalty = 10.0;
-
-    // ---- CLI args parse ----
-    for (int i = 1; i < argc; ++i) {
-        std::string arg = argv[i];
-        if (arg == "--seed" && i + 1 < argc) {
-            base_seed = std::stoull(argv[++i]);
-        } else if (arg == "--items" && i + 1 < argc) {
-            n_items = std::stoi(argv[++i]);
-        } else if (arg == "--N" && i + 1 < argc) {
-            N = std::stoi(argv[++i]);
-        } else if (arg == "--iter" && i + 1 < argc) {
-            iter = std::stoi(argv[++i]);
-        } else if (arg == "--run_id" && i + 1 < argc) {
-            run_id = std::stoi(argv[++i]);
-        } else if ((arg == "-P" || arg == "--penalty") && i + 1 < argc) {
-            P_penalty = std::stod(argv[++i]);
-        } else if (i == 1 && !arg.empty() && arg[0] != '-') {
-            base_seed = std::stoull(arg);
-        }
+void gpu_set_device(int local_rank) {
+    int device_count = 0;
+    CUDA_CHECK(cudaGetDeviceCount(&device_count));
+    if (device_count > 0) {
+        CUDA_CHECK(cudaSetDevice(local_rank % device_count));
     }
+}
 
-    unsigned long long actual_seed = base_seed + run_id;
-
-    std::vector<double> weights(n_items), values(n_items);
-    for (int i = 0; i < n_items; ++i) {
-        double w = (double)((i % 10) + 1);
-        weights[i] = w;
-        values[i] = w + 5.0;
-    }
-    double sum_w = std::accumulate(weights.begin(), weights.end(), 0.0);
-    double C = sum_w / 2.0;
-
-    std::cout << "Building QUBO matrix (Teacher formulation)...\n";
-    std::vector<double> Qh =
-        build_teacher_qubo_matrix_host(values, weights, C, P_penalty);
+AeqtsResult run_aeqts(const AeqtsParams& params, const std::vector<double>& Qh) {
+    const int iter = params.iter;
+    const int n_items = params.n_items;
+    const int N = params.N;
+    const unsigned long long actual_seed = params.seed;
 
     // ====== Device allocations ======
     double* dQ = nullptr;
@@ -107,15 +74,7 @@ int main(int argc, char** argv) {
                                     d_idx_sorted, N);
 
     CUDA_CHECK(cudaMalloc(&d_temp_storage, temp_storage_bytes));
-std::vector<unsigned char> best_sol_h(n_items);
-
-    std::cout << "\n=======================================\n";
-    std::cout << "Start experiment (Run ID: " << run_id << ")\n";
-    std::cout << "Seed=" << actual_seed << " (Base=" << base_seed << ")\n";
-    std::cout << "P=" << P_penalty << ", Items=" << n_items
-              << ", Capacity=" << C << "\n";
-    std::cout << "N=" << N << ", Iter=" << iter << "\n";
-    std::cout << "=======================================\n\n";
+    std::vector<unsigned char> best_sol_h(n_items);
 
     float init = 1.0f / std::sqrt(2.0f);
     std::vector<float> alpha_h(n_items, init), beta_h(n_items, init);
@@ -128,8 +87,8 @@ std::vector<unsigned char> best_sol_h(n_items);
 
     // Initialize GPU global best energy (use double)
     double init_energy_val = 1e30;
-    CUDA_CHECK(cudaMemcpy(d_global_best_energy, &init_energy_val, sizeof(double),
-                          cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_global_best_energy, &init_energy_val,
+                          sizeof(double), cudaMemcpyHostToDevice));
 
     // ---- Initial evaluation ----
     {
@@ -189,27 +148,16 @@ std::vector<unsigned char> best_sol_h(n_items);
     auto t1 = std::chrono::high_resolution_clock::now();
     double total_ms =
         std::chrono::duration<double, std::milli>(t1 - t0).count();
-    double avg_ms = total_ms / (double)iter;
-double final_global_best_energy = 0.0;
-    CUDA_CHECK(cudaMemcpy(&final_global_best_energy, d_global_best_energy,
+
+    AeqtsResult result;
+    result.best_solution.resize(n_items);
+    result.avg_iter_ms = total_ms / (double)iter;
+
+    CUDA_CHECK(cudaMemcpy(&result.best_energy, d_global_best_energy,
                           sizeof(double), cudaMemcpyDeviceToHost));
-    CUDA_CHECK(cudaMemcpy(best_sol_h.data(), d_global_best_sol,
+    CUDA_CHECK(cudaMemcpy(result.best_solution.data(), d_global_best_sol,
                           (size_t)n_items * sizeof(unsigned char),
                           cudaMemcpyDeviceToHost));
-
-    double final_w = 0.0, final_v = 0.0;
-    for (int i = 0; i < n_items; ++i) {
-        if (best_sol_h[i]) {
-            final_w += weights[i];
-            final_v += values[i];
-        }
-    }
-
-    bool valid = (final_w <= C + 1e-5);
-    std::cout << ": Energy=" << final_global_best_energy << " | Val=" << final_v
-              << " | W=" << final_w << "/" << C << " | "
-              << (valid ? "VALID" : "OVERWEIGHT") << " | AvgIter=" << avg_ms
-              << " ms\n";
 
     // cleanup
     CUDA_CHECK(cudaFree(d_states));
@@ -225,5 +173,5 @@ double final_global_best_energy = 0.0;
     CUDA_CHECK(cudaFree(d_idx_sorted));
     CUDA_CHECK(cudaFree(d_energy_sorted));
 
-    return 0;
+    return result;
 }
