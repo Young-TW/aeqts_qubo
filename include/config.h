@@ -6,7 +6,7 @@
 #include <sstream>
 #include <string>
 
-// 實驗參數,預設值與原本 main.cu 內建值相同。
+// 實驗參數,預設值與 main.cpp 內建值相同。
 struct Config {
     int iter = 1000;
     int n_items = 500;
