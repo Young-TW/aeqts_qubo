@@ -12,7 +12,7 @@ std::vector<double> build_teacher_qubo_matrix_host(
 
     for (int i = 0; i < n; ++i) {
         double coeff_linear = -values[i] + 2.0 * P * (weights[i] * weights[i]) -
-                             2.0 * P * capacity * weights[i];
+                              2.0 * P * capacity * weights[i];
         Q[(size_t)i * n + i] = coeff_linear;
 
         for (int j = i + 1; j < n; ++j) {

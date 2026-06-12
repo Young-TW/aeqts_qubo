@@ -12,7 +12,7 @@
 * **能量評估**：平行計算  系統能量。
 * **量子閘更新**：基於種群中「最佳」與「最差」解的差異，並行更新每個量子位元的旋轉角度 ()。
 
-* **Thrust 整合**：利用 `thrust::sort_by_key` 在 GPU 端快速對能量進行排序，以篩選菁英個體。
+* **CUB 整合**：利用 `cub::DeviceRadixSort::SortPairs` 在 GPU 端快速對能量進行排序，以篩選菁英個體。
 
 ## 系統需求
 
@@ -73,7 +73,7 @@ cmake --build build --config Release
 2. **主迴圈**：
    * **生成鄰域 (`generate_neighbours_kernel`)**：根據量子位元的機率幅  進行觀測，產生二進位解 ()。
    * **計算能量 (`qubo_energy_kernel`)**：計算目標函數值 。
-   * **排序 (`thrust::sort_by_key`)**：依據能量由小到大排序，能量越低代表解越佳。
+   * **排序 (`cub::DeviceRadixSort::SortPairs`)**：依據能量由小到大排序，能量越低代表解越佳。
    * **更新 Q-bit (`updateQ_kernel`)**：
    * 選取前  個最佳解與後  個最差解配對。
    * 計算差異向量並套用動態旋轉角度 。

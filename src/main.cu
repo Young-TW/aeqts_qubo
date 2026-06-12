@@ -8,8 +8,33 @@
 #include "kernels.cuh"
 #include "qubo_matrix.h"
 
+#ifdef USE_MPI
+#include <mpi.h>
+#endif
+
 // ------------------------------ Main ------------------------------
 int main(int argc, char** argv) {
+#ifdef USE_MPI
+    MPI_Init(&argc, &argv);
+    int world_rank = 0, world_size = 1;
+    MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &world_size);
+
+    // 取得 node 內的 local rank,用來綁定各自的 GPU
+    MPI_Comm node_comm;
+    MPI_Comm_split_type(MPI_COMM_WORLD, MPI_COMM_TYPE_SHARED, world_rank,
+                        MPI_INFO_NULL, &node_comm);
+    int local_rank = 0;
+    MPI_Comm_rank(node_comm, &local_rank);
+    MPI_Comm_free(&node_comm);
+
+    int device_count = 0;
+    CUDA_CHECK(cudaGetDeviceCount(&device_count));
+    CUDA_CHECK(cudaSetDevice(local_rank % device_count));
+#else
+    const int world_rank = 0, world_size = 1;
+#endif
+
     int iter = 1000;
     int n_items = 500;
     int N = 50;
@@ -37,7 +62,12 @@ int main(int argc, char** argv) {
         }
     }
 
-    unsigned long long actual_seed = base_seed + run_id;
+    // 島嶼模型:每個 rank 以不同種子做獨立搜尋。
+    // run_id (Slurm array) 與 world_rank 都納入,避免跨任務 / 跨 rank 撞種子。
+    unsigned long long actual_seed =
+        base_seed +
+        (unsigned long long)run_id * (unsigned long long)world_size +
+        (unsigned long long)world_rank;
 
     std::vector<double> weights(n_items), values(n_items);
     for (int i = 0; i < n_items; ++i) {
@@ -48,7 +78,9 @@ int main(int argc, char** argv) {
     double sum_w = std::accumulate(weights.begin(), weights.end(), 0.0);
     double C = sum_w / 2.0;
 
-    std::cout << "Building QUBO matrix (Teacher formulation)...\n";
+    if (world_rank == 0) {
+        std::cout << "Building QUBO matrix (Teacher formulation)...\n";
+    }
     std::vector<double> Qh =
         build_teacher_qubo_matrix_host(values, weights, C, P_penalty);
 
@@ -107,15 +139,18 @@ int main(int argc, char** argv) {
                                     d_idx_sorted, N);
 
     CUDA_CHECK(cudaMalloc(&d_temp_storage, temp_storage_bytes));
-std::vector<unsigned char> best_sol_h(n_items);
+    std::vector<unsigned char> best_sol_h(n_items);
 
-    std::cout << "\n=======================================\n";
-    std::cout << "Start experiment (Run ID: " << run_id << ")\n";
-    std::cout << "Seed=" << actual_seed << " (Base=" << base_seed << ")\n";
-    std::cout << "P=" << P_penalty << ", Items=" << n_items
-              << ", Capacity=" << C << "\n";
-    std::cout << "N=" << N << ", Iter=" << iter << "\n";
-    std::cout << "=======================================\n\n";
+    if (world_rank == 0) {
+        std::cout << "\n=======================================\n";
+        std::cout << "Start experiment (Run ID: " << run_id << ")\n";
+        std::cout << "MPI ranks (islands): " << world_size << "\n";
+        std::cout << "Seed=" << actual_seed << " (Base=" << base_seed << ")\n";
+        std::cout << "P=" << P_penalty << ", Items=" << n_items
+                  << ", Capacity=" << C << "\n";
+        std::cout << "N=" << N << ", Iter=" << iter << "\n";
+        std::cout << "=======================================\n\n";
+    }
 
     float init = 1.0f / std::sqrt(2.0f);
     std::vector<float> alpha_h(n_items, init), beta_h(n_items, init);
@@ -128,8 +163,8 @@ std::vector<unsigned char> best_sol_h(n_items);
 
     // Initialize GPU global best energy (use double)
     double init_energy_val = 1e30;
-    CUDA_CHECK(cudaMemcpy(d_global_best_energy, &init_energy_val, sizeof(double),
-                          cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_global_best_energy, &init_energy_val,
+                          sizeof(double), cudaMemcpyHostToDevice));
 
     // ---- Initial evaluation ----
     {
@@ -190,12 +225,30 @@ std::vector<unsigned char> best_sol_h(n_items);
     double total_ms =
         std::chrono::duration<double, std::milli>(t1 - t0).count();
     double avg_ms = total_ms / (double)iter;
-double final_global_best_energy = 0.0;
+    double final_global_best_energy = 0.0;
     CUDA_CHECK(cudaMemcpy(&final_global_best_energy, d_global_best_energy,
                           sizeof(double), cudaMemcpyDeviceToHost));
     CUDA_CHECK(cudaMemcpy(best_sol_h.data(), d_global_best_sol,
                           (size_t)n_items * sizeof(unsigned char),
                           cudaMemcpyDeviceToHost));
+
+    int best_rank = world_rank;
+#ifdef USE_MPI
+    // ---- 島嶼模型彙整:跨 rank 挑出能量最低者,並廣播其解 ----
+    struct {
+        double energy;
+        int rank;
+    } local_pair, global_pair;
+    local_pair.energy = final_global_best_energy;
+    local_pair.rank = world_rank;
+    MPI_Allreduce(&local_pair, &global_pair, 1, MPI_DOUBLE_INT, MPI_MINLOC,
+                  MPI_COMM_WORLD);
+    final_global_best_energy = global_pair.energy;
+    best_rank = global_pair.rank;
+    // 由勝出的 rank 把最佳解廣播給所有人
+    MPI_Bcast(best_sol_h.data(), n_items, MPI_UNSIGNED_CHAR, best_rank,
+              MPI_COMM_WORLD);
+#endif
 
     double final_w = 0.0, final_v = 0.0;
     for (int i = 0; i < n_items; ++i) {
@@ -206,10 +259,13 @@ double final_global_best_energy = 0.0;
     }
 
     bool valid = (final_w <= C + 1e-5);
-    std::cout << ": Energy=" << final_global_best_energy << " | Val=" << final_v
-              << " | W=" << final_w << "/" << C << " | "
-              << (valid ? "VALID" : "OVERWEIGHT") << " | AvgIter=" << avg_ms
-              << " ms\n";
+    if (world_rank == 0) {
+        std::cout << ": Energy=" << final_global_best_energy
+                  << " | Val=" << final_v << " | W=" << final_w << "/" << C
+                  << " | " << (valid ? "VALID" : "OVERWEIGHT")
+                  << " | BestRank=" << best_rank << " | AvgIter=" << avg_ms
+                  << " ms\n";
+    }
 
     // cleanup
     CUDA_CHECK(cudaFree(d_states));
@@ -224,6 +280,10 @@ double final_global_best_energy = 0.0;
     CUDA_CHECK(cudaFree(d_temp_storage));
     CUDA_CHECK(cudaFree(d_idx_sorted));
     CUDA_CHECK(cudaFree(d_energy_sorted));
+
+#ifdef USE_MPI
+    MPI_Finalize();
+#endif
 
     return 0;
 }

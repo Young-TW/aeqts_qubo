@@ -48,8 +48,8 @@ __global__ void update_global_best_kernel(
 template <int BLOCK_THREADS>
 __global__ void qubo_energy_kernel_optimized(
     const unsigned char* __restrict__ neighbours,  // N x n_items
-    const double* __restrict__ Q,                   // n_items x n_items
-    double* __restrict__ energies,                  // N
+    const double* __restrict__ Q,                  // n_items x n_items
+    double* __restrict__ energies,                 // N
     int n_items) {
     int nbr = blockIdx.x;
     int tid = threadIdx.x;

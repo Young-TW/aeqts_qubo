@@ -27,6 +27,6 @@ export UCX_MEMTYPE_CACHE=n
 export UCX_TLS=rc,cuda_copy,cuda_ipc
 export OMPI_MCA_pml=ucx
 
-cmake -S . -B build -DBACKEND=CUDA -DCMAKE_BUILD_TYPE=Release
+cmake -S . -B build -DBACKEND=CUDA -DCMAKE_BUILD_TYPE=Release -DENABLE_MPI=ON
 
 cmake --build build -j
