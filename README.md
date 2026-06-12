@@ -19,9 +19,9 @@
 * **作業系統**：Linux (建議 Fedora 或 Ubuntu)
 * **硬體**：NVIDIA/AMD GPU (需支援 CUDA/HIP)
 * **軟體環境**：
-* NVIDIA CUDA Toolkit (包含 `nvcc` 編譯器與 `thrust` 函式庫)
-* AMD ROCm (包含 `hipcc` 編譯器與 `thrust` 函式庫)
-* 支援 C++11 或更高標準的編譯器
+* NVIDIA CUDA Toolkit (包含 `nvcc` 編譯器與 `cub` 函式庫)
+* AMD ROCm (包含 `hipcc` 編譯器與 `hipcub` 函式庫)
+* 支援 C++17 或更高標準的編譯器
 
 ## 編譯方式
 

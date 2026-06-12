@@ -37,8 +37,8 @@ int main(int argc, char** argv) {
     gpu_set_device(0);
 #endif
 
-    // ---- 先決定設定檔路徑(可由 --config 覆寫,預設 config/case.toml) ----
-    std::string config_path = "config/case.toml";
+    // ---- 先決定設定檔路徑(可由 --config 覆寫,預設 config/case.conf) ----
+    std::string config_path = "config/case.conf";
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "--config" && i + 1 < argc) {
