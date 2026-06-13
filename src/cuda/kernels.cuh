@@ -37,10 +37,10 @@ __global__ void updateQ_kernel(
     int n_items);
 
 __global__ void update_global_best_kernel(
-    const double* __restrict__ sorted_energies,
+    const float* __restrict__ sorted_energies,
     const int* __restrict__ sorted_idx,
     const unsigned char* __restrict__ neighbours,
-    double* __restrict__ global_best_energy,
+    float* __restrict__ global_best_energy,
     unsigned char* __restrict__ global_best_sol, int n_items);
 
 // ------------------------------ Template Kernel 實作
@@ -48,8 +48,8 @@ __global__ void update_global_best_kernel(
 template <int BLOCK_THREADS>
 __global__ void qubo_energy_kernel_optimized(
     const unsigned char* __restrict__ neighbours,  // N x n_items
-    const double* __restrict__ Q,                  // n_items x n_items
-    double* __restrict__ energies,                 // N
+    const float* __restrict__ Q,                   // n_items x n_items
+    float* __restrict__ energies,                  // N
     int n_items) {
     // grid.y selects the neighbour; grid.x splits the i-dimension across
     // multiple blocks so one neighbour's reduction is shared by several SMs.
@@ -58,13 +58,13 @@ __global__ void qubo_energy_kernel_optimized(
 
     const unsigned char* x = neighbours + (size_t)nbr * n_items;
 
-    double thread_sum = 0.0;
+    float thread_sum = 0.0f;
 
     int i_start = blockIdx.x * BLOCK_THREADS + tid;
     int i_stride = gridDim.x * BLOCK_THREADS;
     for (int i = i_start; i < n_items; i += i_stride) {
         if (x[i]) {
-            const double* Qi = Q + (size_t)i * n_items;
+            const float* Qi = Q + (size_t)i * n_items;
             for (int j = 0; j < n_items; ++j) {
                 if (x[j]) {
                     thread_sum += Qi[j];
@@ -73,10 +73,10 @@ __global__ void qubo_energy_kernel_optimized(
         }
     }
 
-    typedef cub::BlockReduce<double, BLOCK_THREADS> BlockReduce;
+    typedef cub::BlockReduce<float, BLOCK_THREADS> BlockReduce;
     __shared__ typename BlockReduce::TempStorage temp_storage;
 
-    double block_sum = BlockReduce(temp_storage).Sum(thread_sum);
+    float block_sum = BlockReduce(temp_storage).Sum(thread_sum);
 
     // energies[] must be zeroed before launch; each i-tile adds its partial sum.
     if (tid == 0) {

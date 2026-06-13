@@ -6,7 +6,7 @@
 #include "solver.h"
 
 // Number of blocks the energy kernel uses per neighbour along the i-dimension.
-// Splitting one neighbour across several blocks spreads its FP64 reduction over
+// Splitting one neighbour across several blocks spreads its FP32 reduction over
 // more SMs (raising grid occupancy). ENERGY_SPLIT * (block threads) must cover
 // n_items. 4-way x 128 threads was the sweet spot on AMD gfx1201; re-profile
 // to retune for a given NVIDIA GPU.
@@ -27,8 +27,11 @@ AeqtsResult run_aeqts(const AeqtsParams& params, const std::vector<double>& Qh) 
     const unsigned long long actual_seed = params.seed;
 
     // ====== Device allocations ======
-    double* dQ = nullptr;
-    double* d_energy = nullptr;
+    // 能量計算改用 FP32:QUBO 矩陣與能量以 float 運算,避開消費級 GPU 的 FP64
+    // 吞吐懲罰。Qh 仍以 double 傳入,於上傳前轉成 float;最終回報的 best_energy
+    // 再轉回 double。
+    float* dQ = nullptr;
+    float* d_energy = nullptr;
     int* d_idx = nullptr;
     unsigned char* d_nei = nullptr;
     float *d_alpha = nullptr, *d_beta = nullptr;
@@ -36,13 +39,16 @@ AeqtsResult run_aeqts(const AeqtsParams& params, const std::vector<double>& Qh) 
     curandStatePhilox4_32_10_t* d_states = nullptr;
     int total_measure_threads = N * n_items;
 
+    std::vector<float> Qf(Qh.size());
+    for (size_t i = 0; i < Qh.size(); ++i) Qf[i] = (float)Qh[i];
+
     CUDA_CHECK(
-        cudaMalloc(&dQ, (size_t)n_items * (size_t)n_items * sizeof(double)));
-    CUDA_CHECK(cudaMemcpy(dQ, Qh.data(),
-                          (size_t)n_items * (size_t)n_items * sizeof(double),
+        cudaMalloc(&dQ, (size_t)n_items * (size_t)n_items * sizeof(float)));
+    CUDA_CHECK(cudaMemcpy(dQ, Qf.data(),
+                          (size_t)n_items * (size_t)n_items * sizeof(float),
                           cudaMemcpyHostToDevice));
 
-    CUDA_CHECK(cudaMalloc(&d_energy, (size_t)N * sizeof(double)));
+    CUDA_CHECK(cudaMalloc(&d_energy, (size_t)N * sizeof(float)));
     CUDA_CHECK(cudaMalloc(&d_idx, (size_t)N * sizeof(int)));
     CUDA_CHECK(cudaMalloc(&d_nei,
                           (size_t)N * (size_t)n_items * sizeof(unsigned char)));
@@ -63,15 +69,15 @@ AeqtsResult run_aeqts(const AeqtsParams& params, const std::vector<double>& Qh) 
         CUDA_CHECK(cudaDeviceSynchronize());
     }
 
-    double* d_global_best_energy = nullptr;
+    float* d_global_best_energy = nullptr;
     unsigned char* d_global_best_sol = nullptr;
-    CUDA_CHECK(cudaMalloc(&d_global_best_energy, sizeof(double)));
+    CUDA_CHECK(cudaMalloc(&d_global_best_energy, sizeof(float)));
     CUDA_CHECK(cudaMalloc(&d_global_best_sol,
                           (size_t)n_items * sizeof(unsigned char)));
 
-    double* d_energy_sorted = nullptr;
+    float* d_energy_sorted = nullptr;
     int* d_idx_sorted = nullptr;
-    CUDA_CHECK(cudaMalloc(&d_energy_sorted, (size_t)N * sizeof(double)));
+    CUDA_CHECK(cudaMalloc(&d_energy_sorted, (size_t)N * sizeof(float)));
     CUDA_CHECK(cudaMalloc(&d_idx_sorted, (size_t)N * sizeof(int)));
 
     void* d_temp_storage = nullptr;
@@ -92,10 +98,10 @@ AeqtsResult run_aeqts(const AeqtsParams& params, const std::vector<double>& Qh) 
                           (size_t)n_items * sizeof(float),
                           cudaMemcpyHostToDevice));
 
-    // Initialize GPU global best energy (use double)
-    double init_energy_val = 1e30;
+    // Initialize GPU global best energy (FP32)
+    float init_energy_val = 1e30f;
     CUDA_CHECK(cudaMemcpy(d_global_best_energy, &init_energy_val,
-                          sizeof(double), cudaMemcpyHostToDevice));
+                          sizeof(float), cudaMemcpyHostToDevice));
 
     // ---- Initial evaluation ----
     {
@@ -105,7 +111,7 @@ AeqtsResult run_aeqts(const AeqtsParams& params, const std::vector<double>& Qh) 
                                                         N, n_items, d_states);
         CUDA_CHECK(cudaGetLastError());
 
-        CUDA_CHECK(cudaMemsetAsync(d_energy, 0, (size_t)N * sizeof(double), 0));
+        CUDA_CHECK(cudaMemsetAsync(d_energy, 0, (size_t)N * sizeof(float), 0));
         qubo_energy_kernel_optimized<128>
             <<<dim3(ENERGY_SPLIT, N), 128>>>(d_nei, dQ, d_energy, n_items);
         CUDA_CHECK(cudaGetLastError());
@@ -132,7 +138,7 @@ AeqtsResult run_aeqts(const AeqtsParams& params, const std::vector<double>& Qh) 
         generate_neighbours_kernel<<<blocks, threads>>>(d_alpha, d_beta, d_nei,
                                                         N, n_items, d_states);
 
-        CUDA_CHECK(cudaMemsetAsync(d_energy, 0, (size_t)N * sizeof(double), 0));
+        CUDA_CHECK(cudaMemsetAsync(d_energy, 0, (size_t)N * sizeof(float), 0));
         qubo_energy_kernel_optimized<128>
             <<<dim3(ENERGY_SPLIT, N), 128>>>(d_nei, dQ, d_energy, n_items);
 
@@ -162,8 +168,10 @@ AeqtsResult run_aeqts(const AeqtsParams& params, const std::vector<double>& Qh) 
     result.best_solution.resize(n_items);
     result.avg_iter_ms = total_ms / (double)iter;
 
-    CUDA_CHECK(cudaMemcpy(&result.best_energy, d_global_best_energy,
-                          sizeof(double), cudaMemcpyDeviceToHost));
+    float best_energy_f = 0.0f;
+    CUDA_CHECK(cudaMemcpy(&best_energy_f, d_global_best_energy, sizeof(float),
+                          cudaMemcpyDeviceToHost));
+    result.best_energy = (double)best_energy_f;
     CUDA_CHECK(cudaMemcpy(result.best_solution.data(), d_global_best_sol,
                           (size_t)n_items * sizeof(unsigned char),
                           cudaMemcpyDeviceToHost));
