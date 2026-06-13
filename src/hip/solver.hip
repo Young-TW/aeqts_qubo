@@ -20,16 +20,16 @@ void gpu_set_device(int local_rank) {
     }
 }
 
-AeqtsResult run_aeqts(const AeqtsParams& params, const std::vector<double>& Qh) {
+AeqtsResult run_aeqts(const AeqtsParams& params, const std::vector<float>& Qh) {
     const int iter = params.iter;
     const int n_items = params.n_items;
     const int N = params.N;
     const unsigned long long actual_seed = params.seed;
 
     // ====== Device allocations ======
-    // 能量計算改用 FP32:QUBO 矩陣與能量在消費級 RDNA4 上以 float 運算,
-    // 避開 FP64 的吞吐懲罰(約 FP32 的 1/16)。Qh 仍以 double 傳入,於上傳前
-    // 轉成 float。最終回報的 best_energy 再轉回 double。
+    // 能量計算全程 FP32:QUBO 矩陣與能量以 float 運算,避開消費級 RDNA4 的
+    // FP64 吞吐懲罰(約 FP32 的 1/16)。Qh 為 float 直接上傳,best_energy 為
+    // float 直接回傳。
     float* dQ = nullptr;
     float* d_energy = nullptr;
     int* d_idx = nullptr;
@@ -39,12 +39,9 @@ AeqtsResult run_aeqts(const AeqtsParams& params, const std::vector<double>& Qh) 
     hiprandStatePhilox4_32_10_t* d_states = nullptr;
     int total_measure_threads = N * n_items;
 
-    std::vector<float> Qf(Qh.size());
-    for (size_t i = 0; i < Qh.size(); ++i) Qf[i] = (float)Qh[i];
-
     CUDA_CHECK(
         hipMalloc(&dQ, (size_t)n_items * (size_t)n_items * sizeof(float)));
-    CUDA_CHECK(hipMemcpy(dQ, Qf.data(),
+    CUDA_CHECK(hipMemcpy(dQ, Qh.data(),
                           (size_t)n_items * (size_t)n_items * sizeof(float),
                           hipMemcpyHostToDevice));
 
@@ -168,10 +165,8 @@ AeqtsResult run_aeqts(const AeqtsParams& params, const std::vector<double>& Qh) 
     result.best_solution.resize(n_items);
     result.avg_iter_ms = total_ms / (double)iter;
 
-    float best_energy_f = 0.0f;
-    CUDA_CHECK(hipMemcpy(&best_energy_f, d_global_best_energy, sizeof(float),
-                          hipMemcpyDeviceToHost));
-    result.best_energy = (double)best_energy_f;
+    CUDA_CHECK(hipMemcpy(&result.best_energy, d_global_best_energy,
+                          sizeof(float), hipMemcpyDeviceToHost));
     CUDA_CHECK(hipMemcpy(result.best_solution.data(), d_global_best_sol,
                           (size_t)n_items * sizeof(unsigned char),
                           hipMemcpyDeviceToHost));

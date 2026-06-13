@@ -121,13 +121,19 @@ tile 寬度 = block threads，所以 **`SPLIT × threads` 必須恰好覆蓋 `n_
 
 ## 改動
 
-能量相關的整條資料路徑由 `double` 改為 `float`:
+能量相關的整條資料路徑由 `double` 改為 `float`,並進一步讓 **host 端到 solver 介面全程 float**
+(float 進 float 出,不再有任何 double↔float 轉換邊界):
 
 - `qubo_energy_kernel_optimized`:`Q`、`thread_sum`、`BlockReduce`、`energies`、`atomicAdd` 全部 FP32。
 - `update_global_best_kernel`:`sorted_energies`、`global_best_energy` 改 FP32。
 - `solver`:`dQ`、`d_energy`、`d_energy_sorted`、`d_global_best_energy` 改 FP32;
-  `Qh`(double)在上傳前轉成 `float`;`hipcub::DeviceRadixSort` 因鍵型別變 float 自動改排 float;
-  最終 `best_energy` 由 float 轉回 double 回報(對外介面 `solver.h` 不變)。
+  `hipcub::DeviceRadixSort` 因鍵型別變 float 自動改排 float。
+- **介面 `solver.h`**:`run_aeqts` 收 `std::vector<float>` Qh、`AeqtsResult::best_energy` 為 `float`
+  (`avg_iter_ms` 為計時,保留 double)。`Qh` 為 float 直接上傳、`best_energy` 為 float 直接回傳,
+  省掉先前的 host 端轉換。
+- **`build_teacher_qubo_matrix_host`**:輸入/輸出全改 `float`。
+- **`main.cpp`**:weights / values / capacity / penalty / 能量彙整(含 MPI `MPI_FLOAT_INT` MINLOC)
+  全部 `float`,僅計時變數 `avg_ms` 保留 `double`。
 
 ## rocprofv3 對比（同機重新量測,`<128>` 4-way 配置）
 

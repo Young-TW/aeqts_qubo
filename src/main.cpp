@@ -62,7 +62,7 @@ int main(int argc, char** argv) {
     int N = cfg.N;
     unsigned long long base_seed = cfg.base_seed;
     int run_id = cfg.run_id;
-    double P_penalty = cfg.P_penalty;
+    float P_penalty = (float)cfg.P_penalty;
 
     // ---- CLI args parse(覆寫設定檔的值) ----
     for (int i = 1; i < argc; ++i) {
@@ -80,7 +80,7 @@ int main(int argc, char** argv) {
         } else if (arg == "--run_id" && i + 1 < argc) {
             run_id = std::stoi(argv[++i]);
         } else if ((arg == "-P" || arg == "--penalty") && i + 1 < argc) {
-            P_penalty = std::stod(argv[++i]);
+            P_penalty = std::stof(argv[++i]);
         } else if (i == 1 && !arg.empty() && arg[0] != '-') {
             base_seed = std::stoull(arg);
         }
@@ -93,19 +93,19 @@ int main(int argc, char** argv) {
         (unsigned long long)run_id * (unsigned long long)world_size +
         (unsigned long long)world_rank;
 
-    std::vector<double> weights(n_items), values(n_items);
+    std::vector<float> weights(n_items), values(n_items);
     for (int i = 0; i < n_items; ++i) {
-        double w = (double)((i % 10) + 1);
+        float w = (float)((i % 10) + 1);
         weights[i] = w;
-        values[i] = w + 5.0;
+        values[i] = w + 5.0f;
     }
-    double sum_w = std::accumulate(weights.begin(), weights.end(), 0.0);
-    double C = sum_w / 2.0;
+    float sum_w = std::accumulate(weights.begin(), weights.end(), 0.0f);
+    float C = sum_w / 2.0f;
 
     if (world_rank == 0) {
         std::cout << "Building QUBO matrix (Teacher formulation)...\n";
     }
-    std::vector<double> Qh =
+    std::vector<float> Qh =
         build_teacher_qubo_matrix_host(values, weights, C, P_penalty);
 
     if (world_rank == 0) {
@@ -123,20 +123,20 @@ int main(int argc, char** argv) {
     AeqtsParams params{iter, n_items, N, actual_seed};
     AeqtsResult result = run_aeqts(params, Qh);
 
-    double final_global_best_energy = result.best_energy;
+    float final_global_best_energy = result.best_energy;
     std::vector<unsigned char> best_sol_h = std::move(result.best_solution);
-    double avg_ms = result.avg_iter_ms;
+    double avg_ms = result.avg_iter_ms;  // 計時保留 double
 
     int best_rank = world_rank;
 #ifdef USE_MPI
     // ---- 島嶼模型彙整:跨 rank 挑出能量最低者,並廣播其解 ----
     struct {
-        double energy;
+        float energy;
         int rank;
     } local_pair, global_pair;
     local_pair.energy = final_global_best_energy;
     local_pair.rank = world_rank;
-    MPI_Allreduce(&local_pair, &global_pair, 1, MPI_DOUBLE_INT, MPI_MINLOC,
+    MPI_Allreduce(&local_pair, &global_pair, 1, MPI_FLOAT_INT, MPI_MINLOC,
                   MPI_COMM_WORLD);
     final_global_best_energy = global_pair.energy;
     best_rank = global_pair.rank;
@@ -145,7 +145,7 @@ int main(int argc, char** argv) {
               MPI_COMM_WORLD);
 #endif
 
-    double final_w = 0.0, final_v = 0.0;
+    float final_w = 0.0f, final_v = 0.0f;
     for (int i = 0; i < n_items; ++i) {
         if (best_sol_h[i]) {
             final_w += weights[i];
@@ -153,7 +153,7 @@ int main(int argc, char** argv) {
         }
     }
 
-    bool valid = (final_w <= C + 1e-5);
+    bool valid = (final_w <= C + 1e-5f);
     if (world_rank == 0) {
         std::cout << ": Energy=" << final_global_best_energy
                   << " | Val=" << final_v << " | W=" << final_w << "/" << C

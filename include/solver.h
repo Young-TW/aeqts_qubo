@@ -15,16 +15,16 @@ struct AeqtsParams {
 };
 
 struct AeqtsResult {
-    double best_energy;                      // 找到的最低能量
+    float best_energy;                         // 找到的最低能量 (FP32)
     std::vector<unsigned char> best_solution;  // 長度 n_items 的 0/1 解
-    double avg_iter_ms;                      // 每代平均耗時 (毫秒)
+    double avg_iter_ms;                        // 每代平均耗時 (毫秒,計時)
 };
 
 // 依本 MPI local rank 綁定 GPU 裝置(單卡情況下等同選用裝置 0)。
 void gpu_set_device(int local_rank);
 
 // 在 GPU 上執行完整的 AEQTS + QUBO 搜尋。
-// Qh 為 row-major 的 n_items x n_items 主機端 QUBO 矩陣。
-AeqtsResult run_aeqts(const AeqtsParams& params, const std::vector<double>& Qh);
+// Qh 為 row-major 的 n_items x n_items 主機端 QUBO 矩陣 (FP32)。
+AeqtsResult run_aeqts(const AeqtsParams& params, const std::vector<float>& Qh);
 
 #endif  // AEQTS_SOLVER_H
