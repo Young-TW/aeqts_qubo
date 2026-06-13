@@ -175,7 +175,19 @@ float 在此量級的解析度約 ±2,使得多個能量近乎相等的解之間
 |---|---|
 | `src/hip/kernels.hpp`、`src/cuda/kernels.cuh` | energy kernel 與 `update_global_best_kernel` 介面改 FP32 |
 | `src/hip/kernels.hip`、`src/cuda/kernels.cu` | `update_global_best_kernel` 內部改 FP32 |
-| `src/hip/solver.hip`、`src/cuda/solver.cu` | 能量路徑緩衝區改 FP32、`Q` 上傳前轉 float、回報前轉回 double |
+| `src/hip/solver.hip`、`src/cuda/solver.cu` | 能量路徑緩衝區改 FP32;`Qh` float 直接上傳、`best_energy` float 直接回傳(無轉換) |
+| `include/solver.h` | `run_aeqts` 收 `vector<float>`、`AeqtsResult::best_energy` 為 `float`(`avg_iter_ms` 計時仍 double)|
+| `include/qubo_matrix.h`、`src/qubo_matrix.cpp` | `build_teacher_qubo_matrix_host` 輸入/輸出全改 `float` |
+| `src/main.cpp` | weights/values/capacity/penalty/能量彙整(`MPI_FLOAT_INT`)改 `float`,僅計時保留 double |
+| `test/test_qubo_matrix.cpp` | 改 `float` 向量、容差放寬到 float 等級 |
 
 - HIP 端已編譯、執行並以 rocprofv3 驗證(數據如上)。
 - CUDA 端為對稱鏡像改動,**本機無 nvcc 未編譯**。
+
+## 後續可優化方向(更新)
+
+1. energy kernel(65.4%)仍是最大宗,且現為 memory-bound:可壓縮 set-bit 索引把內層
+   `if(x[j])` 的 O(n²) 降為 O(k²),或把被選中物品的 `Q` 列預先打包以改善存取連續性。
+2. radix sort(~9%)鍵已是 float、N=50 很小,空間有限。
+3. 若需更高精度的能量回報,可在 GPU 端維持 FP32 計算、僅在最終 `best_energy`
+   以 Kahan/double 重算一次選定解的能量(成本一次,不影響迴圈吞吐)。
