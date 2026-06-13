@@ -105,7 +105,6 @@ tile 寬度 = block threads，所以 **`SPLIT × threads` 必須恰好覆蓋 `n_
 
 - HIP 端已編譯並驗證。
 - CUDA 端為對稱鏡像改動，**本機無 nvcc 未編譯**；不同 SM 數 / FP64 比例下最佳值會不同，需在 NVIDIA 環境重新調 `ENERGY_SPLIT`（維持 `ENERGY_SPLIT × threads ≥ n_items` 且 threads 不浪費）。
-- `src/1gpu/main.cu` 未動（不在 CMake 建置內的舊版獨立檔）。
 
 ## 後續可優化方向
 
