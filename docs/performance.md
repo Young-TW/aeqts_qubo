@@ -27,6 +27,24 @@ rocprofv3 --kernel-trace --stats \
 結果整理在 `prof/<config>/`（已加入 `.gitignore`，不入版控）。重點檔案：
 `report_kernel_stats.csv`、`report_domain_stats.csv`、`report_hip_api_stats.csv`。
 
+### 產生火焰圖
+
+GPU kernel 沒有 host 呼叫堆疊，故以 **kernel 總 GPU 時間為寬度**，建成三層
+`aeqts_qubo → 階段(Energy/Measure/Sort/Update) → kernel` 的火焰圖。
+`scripts/fold_to_flamegraph.py` 為純 Python、無外部依賴的渲染器：
+
+```bash
+# 1) 由 kernel-trace CSV 產生 folded stacks（需先跑過 --kernel-trace）
+#    分群邏輯寫在 scripts 內,可視需要調整
+# 2) 渲染為互動式 SVG（box 有 hover tooltip 顯示 ns / %）
+python3 scripts/fold_to_flamegraph.py \
+  prof/<config>/gpu.folded prof/<config>/flamegraph.svg \
+  "標題" "副標題"
+```
+
+folded stacks 由 `report_kernel_trace.csv` 逐列 `End-Start` 加總而得（見 commit 內的產生片段）。
+SVG 與 `gpu.folded` 落在 `prof/<config>/`，不入版控；渲染器本身入版控可重用。
+
 ## 基準分析
 
 ### 時間分佈（report_domain_stats.csv）
