@@ -45,8 +45,10 @@ VALID_RE = re.compile(r"\|\s*(VALID|OVERWEIGHT)\s*\|")
 #   大 n -> Q 超出 cache,VRAM 頻寬 bound (使用者實際 config 為 4000)
 # iter 取適中讓每個 case 數秒內跑完;N 用 64(實際 config)。
 DEFAULT_CASES = [
+    (1000, 1000, 64),
     (1000, 1500, 64),
     (2000, 1000, 64),
+    (2000, 2000, 64),
     (3000, 800, 64),
     (4000, 600, 64),
 ]
@@ -76,14 +78,16 @@ def run_one(binary, items, iter_, N, seed):
     """跑一次,回傳 (avg_iter_ms, energy, valid)。"""
     cmd = [
         binary,
-        "--items", str(items),
-        "--iter", str(iter_),
-        "--N", str(N),
-        "--seed", str(seed),
+        "--items",
+        str(items),
+        "--iter",
+        str(iter_),
+        "--N",
+        str(N),
+        "--seed",
+        str(seed),
     ]
-    out = subprocess.run(
-        cmd, cwd=str(REPO), capture_output=True, text=True
-    )
+    out = subprocess.run(cmd, cwd=str(REPO), capture_output=True, text=True)
     if out.returncode != 0:
         sys.exit(f"執行失敗 ({binary}):\n{out.stderr}\n{out.stdout}")
     text = out.stdout
@@ -100,20 +104,39 @@ def run_one(binary, items, iter_, N, seed):
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--bin", action="append", type=parse_bin, required=True,
-                    metavar="PATH[:LABEL]",
-                    help="待測執行檔,可重複;第一個為正確性/速度的參考基準。")
-    ap.add_argument("--case", action="append", type=parse_case,
-                    metavar="ITEMS,ITER,N", help="自訂 case,可重複。")
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    ap.add_argument(
+        "--bin",
+        action="append",
+        type=parse_bin,
+        required=True,
+        metavar="PATH[:LABEL]",
+        help="待測執行檔,可重複;第一個為正確性/速度的參考基準。",
+    )
+    ap.add_argument(
+        "--case",
+        action="append",
+        type=parse_case,
+        metavar="ITEMS,ITER,N",
+        help="自訂 case,可重複。",
+    )
     ap.add_argument("--seed", type=int, default=12345)
     ap.add_argument("--reps", type=int, default=3, help="每個 case 交錯量測的輪數。")
     ap.add_argument("--warmup", type=int, default=1, help="正式量測前的暖機輪數。")
-    ap.add_argument("--etol", type=float, default=1e-4,
-                    help="能量相對誤差容忍(超過視為結果不一致)。")
-    ap.add_argument("--rtol", type=float, default=0.02,
-                    help="判定回歸的時間相對門檻;慢於基準超過此比例才算回歸。")
+    ap.add_argument(
+        "--etol",
+        type=float,
+        default=1e-4,
+        help="能量相對誤差容忍(超過視為結果不一致)。",
+    )
+    ap.add_argument(
+        "--rtol",
+        type=float,
+        default=0.02,
+        help="判定回歸的時間相對門檻;慢於基準超過此比例才算回歸。",
+    )
     ap.add_argument("--save", metavar="JSON", help="把結果存成 JSON。")
     args = ap.parse_args()
 
@@ -121,8 +144,10 @@ def main():
     cases = args.case if args.case else DEFAULT_CASES
     ref_label = bins[0][1]
 
-    print(f"參考基準: {ref_label}   seed={args.seed}   reps={args.reps}   "
-          f"warmup={args.warmup}")
+    print(
+        f"參考基準: {ref_label}   seed={args.seed}   reps={args.reps}   "
+        f"warmup={args.warmup}"
+    )
     print(f"binaries: " + ", ".join(f"{l}={p}" for p, l in bins))
     print()
 
@@ -151,8 +176,14 @@ def main():
         ref_t = med[ref_label]
         ref_e = energy[ref_label]
 
-        row = {"items": items, "iter": iter_, "N": N,
-               "median_ms": med, "energy": energy, "valid": valid}
+        row = {
+            "items": items,
+            "iter": iter_,
+            "N": N,
+            "median_ms": med,
+            "energy": energy,
+            "valid": valid,
+        }
         results.append(row)
 
         print(f"=== items={items}  iter={iter_}  N={N} ===")
@@ -169,8 +200,10 @@ def main():
                 if ediff > args.etol:
                     flag += f"  <== ENERGY DIFF {ediff:.2e}"
                     mismatches.append((items, iter_, N, label, ediff))
-            print(f"  {label:<12} {med[label]:>10.4f} {sp:>8.3f}x "
-                  f"{energy[label]:>14.6g} {valid[label]:>10}{flag}")
+            print(
+                f"  {label:<12} {med[label]:>10.4f} {sp:>8.3f}x "
+                f"{energy[label]:>14.6g} {valid[label]:>10}{flag}"
+            )
         print()
 
     # 總結
@@ -187,7 +220,9 @@ def main():
         if mismatches:
             print(f"⚠️  發現 {len(mismatches)} 個能量不一致(>{args.etol:.0e}):")
             for items, iter_, N, label, ediff in mismatches:
-                print(f"   - {label} @ items={items},iter={iter_},N={N}: 相對差 {ediff:.2e}")
+                print(
+                    f"   - {label} @ items={items},iter={iter_},N={N}: 相對差 {ediff:.2e}"
+                )
         else:
             print(f"✅ 能量一致:所有候選與基準在 {args.etol:.0e} 內。")
 
@@ -195,9 +230,13 @@ def main():
         out_path = Path(args.save)
         if not out_path.is_absolute():
             out_path = REPO / out_path
-        out_path.write_text(json.dumps(
-            {"seed": args.seed, "reps": args.reps, "results": results},
-            indent=2, ensure_ascii=False))
+        out_path.write_text(
+            json.dumps(
+                {"seed": args.seed, "reps": args.reps, "results": results},
+                indent=2,
+                ensure_ascii=False,
+            )
+        )
         print(f"\n已存檔: {out_path}")
 
     # 退出碼:有回歸或能量不一致 -> 非 0,方便 CI / 腳本判斷
