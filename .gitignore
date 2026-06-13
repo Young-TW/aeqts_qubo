@@ -5,3 +5,5 @@ build/
 *.log
 *.exe
 *.tmp
+
+prof/
