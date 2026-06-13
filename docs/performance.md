@@ -10,40 +10,8 @@
 | 測試設定 | Items=500, N=50, Iter=1000, seed=12345 |
 | 基準結果 | `Energy=-1.88399e+07 | Val=3094 | W=1374/1375 | VALID` |
 
-## 如何重現 profiling
-
-```bash
-# 完整 system trace（kernel + HIP/HSA API + memory），輸出 CSV
-rocprofv3 --sys-trace --stats --summary \
-  -d prof/<config> -o report --output-format csv \
-  -- ./build/aeqts_qubo 12345
-
-# 只看 kernel 時間（調參時用，較快）
-rocprofv3 --kernel-trace --stats \
-  -d prof/<config> -o report --output-format csv \
-  -- ./build/aeqts_qubo 12345
-```
-
-結果整理在 `prof/<config>/`（已加入 `.gitignore`，不入版控）。重點檔案：
-`report_kernel_stats.csv`、`report_domain_stats.csv`、`report_hip_api_stats.csv`。
-
-### 產生火焰圖
-
-GPU kernel 沒有 host 呼叫堆疊，故以 **kernel 總 GPU 時間為寬度**，建成三層
-`aeqts_qubo → 階段(Energy/Measure/Sort/Update) → kernel` 的火焰圖。
-`scripts/fold_to_flamegraph.py` 為純 Python、無外部依賴的渲染器：
-
-```bash
-# 1) 由 kernel-trace CSV 產生 folded stacks（需先跑過 --kernel-trace）
-#    分群邏輯寫在 scripts 內,可視需要調整
-# 2) 渲染為互動式 SVG（box 有 hover tooltip 顯示 ns / %）
-python3 scripts/fold_to_flamegraph.py \
-  prof/<config>/gpu.folded prof/<config>/flamegraph.svg \
-  "標題" "副標題"
-```
-
-folded stacks 由 `report_kernel_trace.csv` 逐列 `End-Start` 加總而得（見 commit 內的產生片段）。
-SVG 與 `gpu.folded` 落在 `prof/<config>/`，不入版控；渲染器本身入版控可重用。
+> profiling 工具（rocprofv3 計時/trace、火焰圖、硬體計數器）的使用方式見
+> [`docs/rocm/profiling.md`](rocm/profiling.md)。本文聚焦於量測結果與優化紀錄。
 
 ## 基準分析
 
