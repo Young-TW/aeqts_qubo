@@ -247,90 +247,9 @@ column 相同,依然 strided(非 coalesce),只是次數由 n 降到 k。`ENERGY_
 
 ## 後續可優化方向(再更新)
 
-1. ~~energy kernel 的 `Q` 讀取仍未 coalesce,需 warp 切 column 的重排~~ → 已實作,見下節。
+1. energy kernel 仍是最大宗且 `Q` 讀取仍未 coalesce。要再進一步需做 **2D tiling**(一個 warp 負責
+   一塊 row×col 子矩陣的 reduction,類 GEMM),讓 `Q` 讀取同時兼顧 coalesce 與 cache 重用——
+   屬較大改寫。
 2. 利用 `Q` 對稱性只算上三角(`E = diag·x + 2·Σ_{i<j}`)可再砍一半 pair 運算,但改變 FP32 累加
    順序、影響排序穩定性,建議作為可選項。
-3. radix sort 與精度重算同前節。
-
----
-
-# Warp 切 column:讓 `Q` 讀取 coalesce(接續優化)
-
-> 同設定(Items=1000, N=64, seed=12345)。本節在上一節「set-bit 壓縮」之上再重排執行緒對應。
-
-## 動機:先前的瓶頸定位
-
-上一節壓縮版仍是「**一 thread 負責一整個 row**、內層掃 `s_set[b]`」。我先試了 `Q` 對稱性
-只算上三角(總運算量再砍半),**實測 energy kernel 只由 146.6 → 142.3 µs(1.03x),幾乎無感**。
-
-這 3% 是有用的診斷:把總運算量砍半卻沒變快 → kernel **不是 throughput-bound**。原因是
-`k ≈ 500 < SPLIT×128 = 512`,沒有 grid-stride 繞回平攤,**最重的 thread(row `a=0`)不管三角
-與否都要序列讀 ~k 次非 coalesce 的 cache load**。瓶頸是「每個 thread 序列發出 k 筆 strided 讀取」。
-(對稱性版因此 revert。)
-
-## 改法:一個 warp 負責一 row,32 lane 切 column
-
-把「一 thread 一 row」改成「**一個 32-lane warp 一 row**,lane 沿 column 切」:
-
-```cpp
-constexpr int LANES = 32;
-int lane = tid % LANES, warp = tid / LANES, warps_per_block = BLOCK_THREADS / LANES;
-int row_stride = gridDim.x * warps_per_block;
-for (int a = blockIdx.x * warps_per_block + warp; a < k; a += row_stride) {
-    const float* Qi = Q + (size_t)s_set[a] * n_items;
-    for (int b = lane; b < k; b += LANES) thread_sum += Qi[s_set[b]];  // 同 row、相鄰 column
-}
-// 末端一次 BlockReduce + atomicAdd(無 per-row reduction/sync)
-```
-
-關鍵:`s_set` 升序且密(`k≈n/2`,相鄰索引差約 2),**同一 warp 的 32 個 lane 讀的是同一 row 的
-相鄰 column** → 位址相鄰 → **coalesced**,把先前「每 lane 一 row、stride = n_items」的散讀解掉。
-partial 累進 `thread_sum`、末端只做一次 block reduce,**沒有 per-row 的 reduction 或 `__syncthreads`**。
-(這也解釋了為何更早那次「naive column-parallel」反而更慢:它沒有壓縮、內層太短、且 row 序列化又加
-per-row sync;本版三者都避開了。)
-
-## `ENERGY_SPLIT` 調參(wall-clock,每代 AvgIter)
-
-`grid.x` 現在以 **warp 為單位**切 row:warps/neighbour = `gridDim.x × 4`。越多 → 每 warp 的 row 數越少
-(關鍵路徑越短、佔用率越高),但**每個 block 都會重建一次壓縮索引**,故有甜蜜點:
-
-| SPLIT | 4 | 6 | 7 | **8** | 9 | 16 | 32 | 64 |
-|---|---|---|---|---|---|---|---|---|
-| AvgIter (ms) | 0.228 | 0.18 | 0.164 | **0.154** | 0.224 | 0.185 | 0.202 | 0.295 |
-
-**8-way 最佳**(512 blocks = 64 CU × 8/CU,剛好整除;9-way 起因 block 分配不均反而回落)。
-
-## rocprofv3 對比(同機,seed=12345)
-
-| 版本 | energy kernel avg | 佔比 | vs baseline | StdDev |
-|---|---|---|---|---|
-| baseline(掃滿 n,if(x[j])) | 188.2 µs | 84.2% | 1.00x | 14925 ns |
-| set-bit 壓縮(前節) | 146.6 µs | 79.9% | 1.28x | 15481 ns |
-| **warp 切 column + 8-way** | **99.5 µs** | **72.5%** | **1.89x** | **4714 ns** |
-
-- 每代 wall-clock:0.196 → **0.154 ms**(對壓縮版 1.27x)。
-- StdDev 由 ~15k 掉到 ~4.7k ns:讀取 coalesce 後存取時間更穩定,印證瓶頸確為記憶體存取型態。
-
-## 數值與驗證
-
-- seed 12345/9999 皆 **VALID**,能量到 6 位有效數字與 baseline 一致(`-7.54891e+07`)。
-- `ctest`(qubo_matrix / config)通過。
-
-## 改動檔案
-
-| 檔案 | 改動 |
-|---|---|
-| `src/hip/kernels.hpp`、`src/cuda/kernels.cuh` | energy kernel 內層改為 warp-per-row、lane 切 column 的 coalesced 讀取 |
-| `src/hip/solver.hip`、`src/cuda/solver.cu` | `ENERGY_SPLIT` 4 → 8(grid.x 現以 warp 為單位切 row);更新註解 |
-
-- HIP 端已編譯、執行並以 rocprofv3 驗證(數據如上)。
-- CUDA 端為對稱鏡像改動,**本機無 nvcc 未編譯**;`LANES=32` 為邏輯分組,正確性與硬體 warp 大小無關,
-  但 coalesce 效益在 wave32(RDNA)上最佳,NVIDIA(warp=32)亦相符,仍建議重調 `ENERGY_SPLIT`。
-
-## 後續可優化方向(三更新)
-
-1. 每個 block 重建壓縮索引在高 SPLIT 下成為限制;可改為單獨一個 compaction kernel 預先算好
-   `s_set`/`k` 存進全域,energy kernel 直接讀,即可把 SPLIT 拉更高而不付重複壓縮成本。
-2. `Q` 對稱性(上三角)若搭配本節 warp 切 column 的平衡分工,或許能把先前吃不到的那一半省下來——
-   但需重新設計 lane 對 column 的對應以維持 coalesce,屬可選的進階嘗試。
 3. radix sort 與精度重算同前節。

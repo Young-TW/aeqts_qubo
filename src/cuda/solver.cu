@@ -5,13 +5,13 @@
 #include "kernels.cuh"
 #include "solver.h"
 
-// Number of blocks the energy kernel launches per neighbour. Each block holds
-// (BLOCK_THREADS / 32) warps and each warp processes one compacted row, so the
-// rows are tiled across gridDim.x * warps_per_block warps. More blocks shorten
-// the per-warp row count (and raise occupancy) but each block redundantly
-// rebuilds the compacted index list, so there is a sweet spot: 8-way was best
-// on AMD gfx1201 (512 blocks = 8/CU at N=64). Re-profile to retune per GPU.
-static constexpr int ENERGY_SPLIT = 8;
+// Number of blocks the energy kernel uses per neighbour along the i (row)
+// dimension. Splitting one neighbour's rows across several SMs raises grid
+// occupancy; each block strides its (compacted) rows by gridDim.x. With the
+// set-bit-compaction kernel there is no longer a "SPLIT * threads >= n_items"
+// coverage constraint -- ENERGY_SPLIT only trades occupancy against per-block
+// work, so re-profile to retune for a given NVIDIA GPU.
+static constexpr int ENERGY_SPLIT = 4;
 
 void gpu_set_device(int local_rank) {
     int device_count = 0;

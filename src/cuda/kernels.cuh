@@ -97,23 +97,12 @@ __global__ void qubo_energy_kernel_optimized(
     }
     int k = s_count;
 
-    // One row per (logical 32-lane) warp; the 32 lanes split that row's k
-    // columns. Because s_set is ascending and dense (k ~ n/2), lanes in a warp
-    // read adjacent columns of the *same* row -> the Q loads coalesce, which is
-    // the real bottleneck (cache-resident but previously read one row per lane,
-    // strided by n_items). Partial sums accumulate into thread_sum and are
-    // combined by a single block reduce -- no per-row reduction/sync.
-    constexpr int LANES = 32;
-    int lane = tid % LANES;
-    int warp = tid / LANES;
-    int warps_per_block = BLOCK_THREADS / LANES;
-
     float thread_sum = 0.0f;
 
-    int row_stride = gridDim.x * warps_per_block;
-    for (int a = blockIdx.x * warps_per_block + warp; a < k; a += row_stride) {
+    int a_stride = gridDim.x * BLOCK_THREADS;
+    for (int a = blockIdx.x * BLOCK_THREADS + tid; a < k; a += a_stride) {
         const float* Qi = Q + (size_t)s_set[a] * n_items;
-        for (int b = lane; b < k; b += LANES) {
+        for (int b = 0; b < k; ++b) {
             thread_sum += Qi[s_set[b]];
         }
     }
