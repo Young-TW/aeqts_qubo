@@ -172,8 +172,84 @@ float 在此量級的解析度約 ±2,使得多個能量近乎相等的解之間
 
 ## 後續可優化方向(更新)
 
-1. energy kernel(65.4%)仍是最大宗,且現為 memory-bound:可壓縮 set-bit 索引把內層
-   `if(x[j])` 的 O(n²) 降為 O(k²),或把被選中物品的 `Q` 列預先打包以改善存取連續性。
+1. ~~energy kernel 可壓縮 set-bit 索引把內層 `if(x[j])` 的 O(n²) 降為 O(k²)~~ → 已實作,見下節。
 2. radix sort(~9%)鍵已是 float、N=50 很小,空間有限。
 3. 若需更高精度的能量回報,可在 GPU 端維持 FP32 計算、僅在最終 `best_energy`
    以 Kahan/double 重算一次選定解的能量(成本一次,不影響迴圈吞吐)。
+
+---
+
+# Set-bit 壓縮:O(n²) → O(k²)(接續優化)
+
+> 量測設定改為 `config/case.conf` 現值:**Items=1000, N=64, Iter=1000, seed=12345**
+> (與前幾節 Items=500 不同,故下方 baseline 為「同設定重新量測」的值,不可與前節 µs 直接比較)。
+
+## 動機:先排除一個直覺上的錯誤方向
+
+直覺會認為這個 memory-bound kernel 慢在 **`Q` 讀取未 coalesce**——原本一個 thread 負責一段
+row `i`,warp 內相鄰 lane 讀的是相鄰 *row*(位址 stride = `n_items×4` bytes),完全不 coalesce。
+照此把平行維度改成沿 column `j`(讓 lane 讀相鄰 column → coalesced)後,**實測反而變慢**
+(每代 0.24 → 0.35 ms)。
+
+原因:`Q` 只有 `n²×4 = 4 MB`,完整放得進 L2 / Infinity Cache,且**每代被 64 個 neighbour 重複讀取**。
+因此 kernel 實為 **cache/compute-bound 而非 VRAM 頻寬 bound**,coalesce 帶來的頻寬節省被 cache 命中
+掩蓋;column 平行版反而因「每 thread 內層只剩 ~8 圈、外層 row 序列化」而吃了迴圈控制與延遲的虧。
+
+## 改法:壓縮被選中索引
+
+能量只在「兩個都被選中」的 item 對上累加。先用 **block 前綴和(`BlockScan::ExclusiveSum`)**
+把 `x` 的 set-bit 索引壓進 shared memory `s_set[0..k-1]`(升序),再對這 `k` 個索引跑雙重迴圈:
+
+```cpp
+for (int a = blockIdx.x*BLOCK + tid; a < k; a += gridDim.x*BLOCK) {
+    const float* Qi = Q + (size_t)s_set[a] * n_items;
+    for (int b = 0; b < k; ++b) thread_sum += Qi[s_set[b]];  // 無分支、無 x[j] 載入
+}
+```
+
+把內層由「掃滿 `n_items`、每圈 `if(x[j])`」變成 **branch-free 的 O(k²) 純 FMA**。此 knapsack
+capacity = 半總重,`k ≈ n/2`,故對數約減半,並省掉每圈的 `x[j]` 載入與 warp 分歧。
+
+### 關鍵正確性陷阱(踩過)
+
+`grid.x`(`ENERGY_SPLIT`)會把**外層 `a` 切給多個 block 協作同一 neighbour**,所以每個 block 的
+`s_set` 排序**必須完全一致**,各 block 的 `a`-分段才能恰好拼成完整集合。
+一開始用 shared-memory `atomicAdd` 來 append,**各 block 得到不同的排列** → `a` 分段重疊/漏算,
+結果 `OVERWEIGHT`、能量系統性偏低。改用 `BlockScan` 升序壓縮(確定性、跨 block 一致)後正確。
+`ENERGY_SPLIT=1` 時剛好無此問題,故 debug 時以 `SPLIT=1` 對照可快速定位。
+
+## rocprofv3 對比(同機,Items=1000/N=64,`--kernel-trace --stats`,seed=12345)
+
+| Kernel | baseline avg | 壓縮後 avg | 加速 |
+|---|---|---|---|
+| **`qubo_energy_kernel`** | **188.2 µs**(84.2%) | **146.6 µs**(79.9%) | **1.28x** |
+| 每代 wall-clock(AvgIter) | 0.239 ms | 0.20 ms | ~1.2x |
+
+加速「只有」1.28x 而非 ~2x:剩下的瓶頸仍是 `Qi[s_set[b]]` 的讀取——warp 內 lane 的 row 不同、
+column 相同,依然 strided(非 coalesce),只是次數由 n 降到 k。`ENERGY_SPLIT` 在 2/4/6/8 掃描下
+**4-way 仍為甜蜜點**。
+
+## 數值與驗證
+
+- seed 12345/9999 皆 **VALID**,能量到 6 位有效數字與 baseline 一致(`-7.5489e+07`);
+  `Val`/`W` 的微小差異與前節 FP32 累加順序敏感性同源。
+- `ctest`(qubo_matrix / config)通過。
+
+## 改動檔案
+
+| 檔案 | 改動 |
+|---|---|
+| `src/hip/kernels.hpp`、`src/cuda/kernels.cuh` | energy kernel 改為 `BlockScan` 壓縮 set-bit + O(k²) 雙迴圈 |
+| `src/hip/solver.hip`、`src/cuda/solver.cu` | launch 加上 dynamic shared mem `n_items*sizeof(int)`;移除舊的 SPLIT 覆蓋約束註解 |
+
+- HIP 端已編譯、執行並以 rocprofv3 驗證(數據如上)。
+- CUDA 端為對稱鏡像改動,**本機無 nvcc 未編譯**。
+
+## 後續可優化方向(再更新)
+
+1. energy kernel 仍是最大宗且 `Q` 讀取仍未 coalesce。要再進一步需做 **2D tiling**(一個 warp 負責
+   一塊 row×col 子矩陣的 reduction,類 GEMM),讓 `Q` 讀取同時兼顧 coalesce 與 cache 重用——
+   屬較大改寫。
+2. 利用 `Q` 對稱性只算上三角(`E = diag·x + 2·Σ_{i<j}`)可再砍一半 pair 運算,但改變 FP32 累加
+   順序、影響排序穩定性,建議作為可選項。
+3. radix sort 與精度重算同前節。

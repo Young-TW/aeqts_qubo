@@ -5,11 +5,12 @@
 #include "kernels.cuh"
 #include "solver.h"
 
-// Number of blocks the energy kernel uses per neighbour along the i-dimension.
-// Splitting one neighbour across several blocks spreads its FP32 reduction over
-// more SMs (raising grid occupancy). ENERGY_SPLIT * (block threads) must cover
-// n_items. 4-way x 128 threads was the sweet spot on AMD gfx1201; re-profile
-// to retune for a given NVIDIA GPU.
+// Number of blocks the energy kernel uses per neighbour along the i (row)
+// dimension. Splitting one neighbour's rows across several SMs raises grid
+// occupancy; each block strides its (compacted) rows by gridDim.x. With the
+// set-bit-compaction kernel there is no longer a "SPLIT * threads >= n_items"
+// coverage constraint -- ENERGY_SPLIT only trades occupancy against per-block
+// work, so re-profile to retune for a given NVIDIA GPU.
 static constexpr int ENERGY_SPLIT = 4;
 
 void gpu_set_device(int local_rank) {
@@ -109,7 +110,8 @@ AeqtsResult run_aeqts(const AeqtsParams& params, const std::vector<float>& Qh) {
 
         CUDA_CHECK(cudaMemsetAsync(d_energy, 0, (size_t)N * sizeof(float), 0));
         qubo_energy_kernel_optimized<128>
-            <<<dim3(ENERGY_SPLIT, N), 128>>>(d_nei, dQ, d_energy, n_items);
+            <<<dim3(ENERGY_SPLIT, N), 128, (size_t)n_items * sizeof(int)>>>(
+                d_nei, dQ, d_energy, n_items);
         CUDA_CHECK(cudaGetLastError());
 
         int seq_blocks = (N + threads - 1) / threads;
@@ -136,7 +138,8 @@ AeqtsResult run_aeqts(const AeqtsParams& params, const std::vector<float>& Qh) {
 
         CUDA_CHECK(cudaMemsetAsync(d_energy, 0, (size_t)N * sizeof(float), 0));
         qubo_energy_kernel_optimized<128>
-            <<<dim3(ENERGY_SPLIT, N), 128>>>(d_nei, dQ, d_energy, n_items);
+            <<<dim3(ENERGY_SPLIT, N), 128, (size_t)n_items * sizeof(int)>>>(
+                d_nei, dQ, d_energy, n_items);
 
         int seq_blocks = (N + threads - 1) / threads;
         init_sequence_kernel<<<seq_blocks, threads>>>(d_idx, N);

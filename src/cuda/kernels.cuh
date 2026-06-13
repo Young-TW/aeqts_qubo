@@ -51,32 +51,63 @@ __global__ void qubo_energy_kernel_optimized(
     const float* __restrict__ Q,                   // n_items x n_items
     float* __restrict__ energies,                  // N
     int n_items) {
-    // grid.y selects the neighbour; grid.x splits the i-dimension across
-    // multiple blocks so one neighbour's reduction is shared by several SMs.
+    // grid.y selects the neighbour; grid.x splits the (compacted) i-dimension
+    // across multiple blocks so one neighbour's reduction is shared by several
+    // SMs.
+    //
+    // The QUBO matrix Q is dense (cache-resident and reused across all
+    // neighbours), so this kernel is cache/compute-bound rather than VRAM-bound.
+    // The energy only sums over pairs of *selected* items, so we first compact
+    // the set-bit indices of x into shared memory (s_set[0..k-1]) and then run
+    // the double loop over the k selected indices only. This turns the O(n^2)
+    // inner loop -- which loaded x[j] and branched on it every iteration -- into
+    // a branch-free O(k^2) loop of pure FMAs over Q. For this knapsack k ~ n/2.
     int nbr = blockIdx.y;
     int tid = threadIdx.x;
 
     const unsigned char* x = neighbours + (size_t)nbr * n_items;
 
+    typedef cub::BlockScan<int, BLOCK_THREADS> BlockScan;
+    typedef cub::BlockReduce<float, BLOCK_THREADS> BlockReduce;
+    __shared__ union {
+        typename BlockScan::TempStorage scan;
+        typename BlockReduce::TempStorage reduce;
+    } temp_storage;
+
+    extern __shared__ int s_set[];  // n_items ints; holds the selected indices
+    __shared__ int s_count;         // running number of selected items
+
+    if (tid == 0) s_count = 0;
+    __syncthreads();
+
+    // Compact the set-bit indices of x into s_set in ascending order. A block
+    // prefix-sum (rather than a shared atomic) is used so every block of this
+    // neighbour produces the *identical* ordering -- the outer loop below is
+    // tiled across grid.x blocks, so each block must agree on which compacted
+    // position maps to which item.
+    for (int base = 0; base < n_items; base += BLOCK_THREADS) {
+        int j = base + tid;
+        int flag = (j < n_items && x[j]) ? 1 : 0;
+        int pos, total;
+        BlockScan(temp_storage.scan).ExclusiveSum(flag, pos, total);
+        if (flag) s_set[s_count + pos] = j;
+        __syncthreads();
+        if (tid == 0) s_count += total;
+        __syncthreads();
+    }
+    int k = s_count;
+
     float thread_sum = 0.0f;
 
-    int i_start = blockIdx.x * BLOCK_THREADS + tid;
-    int i_stride = gridDim.x * BLOCK_THREADS;
-    for (int i = i_start; i < n_items; i += i_stride) {
-        if (x[i]) {
-            const float* Qi = Q + (size_t)i * n_items;
-            for (int j = 0; j < n_items; ++j) {
-                if (x[j]) {
-                    thread_sum += Qi[j];
-                }
-            }
+    int a_stride = gridDim.x * BLOCK_THREADS;
+    for (int a = blockIdx.x * BLOCK_THREADS + tid; a < k; a += a_stride) {
+        const float* Qi = Q + (size_t)s_set[a] * n_items;
+        for (int b = 0; b < k; ++b) {
+            thread_sum += Qi[s_set[b]];
         }
     }
 
-    typedef cub::BlockReduce<float, BLOCK_THREADS> BlockReduce;
-    __shared__ typename BlockReduce::TempStorage temp_storage;
-
-    float block_sum = BlockReduce(temp_storage).Sum(thread_sum);
+    float block_sum = BlockReduce(temp_storage.reduce).Sum(thread_sum);
 
     // energies[] must be zeroed before launch; each i-tile adds its partial sum.
     if (tid == 0) {
