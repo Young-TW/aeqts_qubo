@@ -51,14 +51,18 @@ __global__ void qubo_energy_kernel_optimized(
     const double* __restrict__ Q,                  // n_items x n_items
     double* __restrict__ energies,                 // N
     int n_items) {
-    int nbr = blockIdx.x;
+    // grid.y selects the neighbour; grid.x splits the i-dimension across
+    // multiple blocks so one neighbour's reduction is shared by several CUs.
+    int nbr = blockIdx.y;
     int tid = threadIdx.x;
 
     const unsigned char* x = neighbours + (size_t)nbr * n_items;
 
     double thread_sum = 0.0;
 
-    for (int i = tid; i < n_items; i += BLOCK_THREADS) {
+    int i_start = blockIdx.x * BLOCK_THREADS + tid;
+    int i_stride = gridDim.x * BLOCK_THREADS;
+    for (int i = i_start; i < n_items; i += i_stride) {
         if (x[i]) {
             const double* Qi = Q + (size_t)i * n_items;
             for (int j = 0; j < n_items; ++j) {
@@ -74,7 +78,8 @@ __global__ void qubo_energy_kernel_optimized(
 
     double block_sum = BlockReduce(temp_storage).Sum(thread_sum);
 
+    // energies[] must be zeroed before launch; each i-tile adds its partial sum.
     if (tid == 0) {
-        energies[nbr] = block_sum;
+        atomicAdd(&energies[nbr], block_sum);
     }
 }
