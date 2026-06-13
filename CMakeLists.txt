@@ -7,6 +7,9 @@ set_property(CACHE BACKEND PROPERTY STRINGS "CUDA" "HIP")
 # add MPI option, default is OFF (Standalone)
 option(ENABLE_MPI "Enable MPI support (CUDA-aware or HIP-aware)" OFF)
 
+# 純 host 單元測試,預設 OFF;-DBUILD_TESTS=ON 時一併建置。
+option(BUILD_TESTS "Build host-side unit tests" OFF)
+
 if(ENABLE_MPI)
     find_package(MPI REQUIRED)
 endif()
@@ -83,4 +86,9 @@ elseif(BACKEND STREQUAL "HIP")
 
 else()
     message(FATAL_ERROR "BACKEND must be either CUDA or HIP")
+endif()
+
+if(BUILD_TESTS)
+    enable_testing()
+    add_subdirectory(test)
 endif()

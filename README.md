@@ -39,6 +39,28 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release -DBACKEND=HIP
 cmake --build build --config Release
 ```
 
+## 單元測試
+
+`test/` 目錄含純 host 端單元測試（無需 CUDA/HIP 工具鏈），涵蓋 QUBO 矩陣建構
+(`build_teacher_qubo_matrix_host`) 與設定檔解析 (`load_config`)。採用零相依的
+極簡測試框架 (`test/test_framework.h`),並透過 CTest 執行。
+
+### 隨主專案一併建置
+
+```bash
+cmake -B build -DBACKEND=CUDA -DBUILD_TESTS=ON
+cmake --build build
+ctest --test-dir build --output-on-failure
+```
+
+### 僅建置測試(無 GPU 工具鏈的機器)
+
+```bash
+cmake -S test -B build-test
+cmake --build build-test
+ctest --test-dir build-test --output-on-failure
+```
+
 ## 使用方法
 
 程式執行時可接受命令列參數以指定亂數種子 (Seed)。
